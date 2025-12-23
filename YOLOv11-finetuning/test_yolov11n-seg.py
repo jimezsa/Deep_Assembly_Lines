@@ -65,7 +65,7 @@ else:
 print(f"Using device: {DEVICE}")
 
 # Load the best trained model weights and move to device
-model_path = os.path.join('runs', 'segment', 'yolov11m_seg_custom', 'weights', 'best.pt')
+model_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
 model = YOLO(model_path).to(DEVICE)
 
 print(f"Loaded fine-tuned model from: {model_path} on {DEVICE}")
