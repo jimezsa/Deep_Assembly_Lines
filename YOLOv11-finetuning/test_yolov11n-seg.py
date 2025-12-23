@@ -3,6 +3,8 @@ import cv2
 import random
 from ultralytics import YOLO
 import numpy as np
+import torch
+import time
 
 def draw_rect_boxes_and_labels(image, boxes, classes):
     """
@@ -53,11 +55,20 @@ def draw_rect_boxes_and_labels(image, boxes, classes):
 
 
 
-# Load the best trained model weights
-model_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
-model = YOLO(model_path)
+# Pick the best available device, preferring Apple MPS for macOS GPUs
+if torch.backends.mps.is_available():
+    DEVICE = torch.device("mps")
+elif torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+else:
+    DEVICE = torch.device("cpu")
+print(f"Using device: {DEVICE}")
 
-print(f"Loaded fine-tuned model from: {model_path}")
+# Load the best trained model weights and move to device
+model_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
+model = YOLO(model_path).to(DEVICE)
+
+print(f"Loaded fine-tuned model from: {model_path} on {DEVICE}")
 
 
 # Define CLASSES (ensure it's in scope)
@@ -72,6 +83,8 @@ if not cap.isOpened():
     raise RuntimeError(f"Could not open video file: {video_path}")
 
 frame_count = 0
+fps = 0.0
+prev_time = None
 
 # Create a window for display
 window_name = f"YOLOv11 Predictions - {os.path.basename(video_path)}"
@@ -88,10 +101,16 @@ while cap.isOpened():
             print("End of video or could not read frame.")
             break
 
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        current_time = time.perf_counter()
+        if prev_time is not None:
+            fps = 1.0 / max(current_time - prev_time, 1e-6)
+        prev_time = current_time
 
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_h, frame_w = img_rgb.shape[:2]
+       
         # Run inference
-        results = model(img_rgb, verbose=False)
+        results = model(img_rgb, verbose=False, device=DEVICE, imgsz=(frame_h, frame_w))
 
         # Collect all detected boxes for this frame
         all_detected_boxes = []
@@ -105,8 +124,8 @@ while cap.isOpened():
         # Convert back to BGR for cv2.imshow
         img_display = cv2.cvtColor(img_with_predictions, cv2.COLOR_RGB2BGR)
         
-        # Add frame counter text
-        cv2.putText(img_display, f"Frame: {frame_count}", (10, 30), 
+        # Add FPS text
+        cv2.putText(img_display, f"FPS: {fps:.1f}", (10, 30), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         frame_count += 1
@@ -115,13 +134,15 @@ while cap.isOpened():
     cv2.imshow(window_name, img_display)
     
     # Wait for key press (25ms delay for ~40 fps, adjust as needed)
-    key = cv2.waitKey(25) & 0xFF
+    key = cv2.waitKey(1) & 0xFF
     
     if key == ord('q'):
         print("Exiting...")
         break
     elif key == ord('p'):
         paused = not paused
+        if not paused:
+            prev_time = time.perf_counter()  # reset timer when resuming
         print("Paused" if paused else "Resumed")
 
 cap.release()
