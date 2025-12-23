@@ -54,6 +54,59 @@ def draw_rect_boxes_and_labels(image, boxes, classes):
     return img_copy
 
 
+def draw_masks_and_scores(image, masks_with_scores, classes):
+    """
+    Draw segmentation masks, class labels, and confidence scores with transparency.
+    """
+    img_copy = image.copy()
+    overlay = img_copy.copy()
+    alpha = 0.4  # Transparency factor
+
+    # Define a set of distinct colors for classes (BGR format for OpenCV)
+    class_colors = [
+      (0, 0, 70),   # person: bluelish
+      (255, 165, 0), # case: orange
+      (180, 100, 0),  # case_top:
+      (0, 100, 100),  # battery: Grenn
+      (128, 0, 128),   # screw: violet
+      (0, 100, 0)  # tool: Green
+    ]
+
+    for class_id, polygon_points, score in masks_with_scores:
+        if polygon_points:
+            color = class_colors[class_id % len(class_colors)] if class_id < len(class_colors) else (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+
+            # Reshape points for cv2.fillPoly and cv2.polylines
+            pts = np.array(polygon_points, np.int32).reshape((-1, 1, 2))
+
+            # Fill the polygon on the overlay with semi-transparency
+            cv2.fillPoly(overlay, [pts], color)
+
+            # Draw polygon outline
+            cv2.polylines(img_copy, [pts], True, color, 1)
+
+            # Put label with score
+            label_text = classes[class_id] if class_id < len(classes) else f"Unknown Class {class_id}"
+            label_text = f"{label_text} {score:.2f}"
+
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.2
+            font_thickness = 1
+            text_size = cv2.getTextSize(label_text, font, font_scale, font_thickness)[0]
+
+            # Place text near the first point of the polygon
+            text_x = polygon_points[0][0]
+            text_y = polygon_points[0][1] - 10 if polygon_points[0][1] - 10 > text_size[1] else polygon_points[0][1] + text_size[1] + 10
+
+            # Draw background for text
+            cv2.rectangle(img_copy, (text_x, text_y - text_size[1] - 5),
+                          (text_x + text_size[0] + 5, text_y + 5), color, -1)
+            cv2.putText(img_copy, label_text, (text_x, text_y), font, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
+
+    # Combine the original image with the overlay using the transparency factor
+    img_with_masks = cv2.addWeighted(overlay, alpha, img_copy, 1 - alpha, 0)
+    return img_with_masks
+
 
 # Pick the best available device, preferring Apple MPS for macOS GPUs
 if torch.backends.mps.is_available():
@@ -106,23 +159,42 @@ while cap.isOpened():
             fps = 1.0 / max(current_time - prev_time, 1e-6)
         prev_time = current_time
 
-        #img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_rgb = frame.copy()
-        #frame_h, frame_w = img_rgb.shape[:2]
+      
         
         # Run inference
         results = model(img_rgb, verbose=False, device=DEVICE)
 
         # Collect all detected boxes for this frame
-        all_detected_boxes = []
+        #all_detected_boxes = []
+        #for r in results:
+        #    if hasattr(r, 'boxes') and r.boxes is not None and len(r.boxes) > 0:
+        #        all_detected_boxes.extend(r.boxes)
+
+        # Collect segmentation masks with class/score for this frame
+        predicted_masks_with_scores = []
         for r in results:
-            if hasattr(r, 'boxes') and r.boxes is not None and len(r.boxes) > 0:
-                all_detected_boxes.extend(r.boxes)
+            if r.masks is not None:
+                boxes = r.boxes
+                for j, mask_data in enumerate(r.masks.data):
+                    class_id = int(boxes.cls[j]) if boxes is not None and len(boxes.cls) > j else 0
+                    confidence_score = float(boxes.conf[j]) if boxes is not None and len(boxes.conf) > j else 0.0
+
+                    # Convert mask tensor to binary mask
+                    mask_np = mask_data.cpu().numpy()
+                    mask_bin = (mask_np > 0.5).astype(np.uint8)
+
+                    contours, _ = cv2.findContours(mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    if contours:
+                        contour = max(contours, key=cv2.contourArea)
+                        polygon_points = [tuple(point[0]) for point in contour]
+                        predicted_masks_with_scores.append((class_id, polygon_points, confidence_score))
 
         # Draw annotated frame
-        img_with_predictions = draw_rect_boxes_and_labels(img_rgb.copy(), all_detected_boxes, CLASSES)
+        img_with_masks = draw_masks_and_scores(img_rgb.copy(), predicted_masks_with_scores, CLASSES)
+        #img_with_predictions = draw_rect_boxes_and_labels(img_with_masks, all_detected_boxes, CLASSES)
         
-        img_display = img_with_predictions.copy()
+        img_display = img_with_masks.copy()
         
         # Add FPS text
         cv2.putText(img_display, f"FPS: {fps:.1f}", (10, 30), 
