@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLOv11 Real-time Video Stream</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            width: 100%;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        
+        #videoElement {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        #startButton {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+        
+        #startButton:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(17, 153, 142, 0.4);
+        }
+        
+        #stopButton {
+            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            color: white;
+        }
+        
+        #stopButton:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(235, 51, 73, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        .status-indicator.disconnected {
+            background-color: #dc3545;
+        }
+        
+        .status-indicator.connecting {
+            background-color: #ffc107;
+        }
+        
+        .status-indicator.connected {
+            background-color: #28a745;
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
+            }
+        }
+        
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        
+        .info-box h3 {
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+        
+        .info-box ul {
+            margin-left: 20px;
+            color: #424242;
+        }
+        
+        .info-box li {
+            margin: 8px 0;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .loading.active {
+            display: block;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 YOLOv11 Real-time Detection Stream</h1>
+            <p>Live object detection and segmentation from Jetson Orin Nano</p>
+        </div>
+        
+        <div class="content">
+            <div class="status">
+                <span class="status-indicator disconnected" id="statusIndicator"></span>
+                <strong>Status:</strong> <span id="statusText">Disconnected</span>
+            </div>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Connecting to stream...</p>
+            </div>
+            
+            <div class="video-container">
+                <video id="videoElement" autoplay playsinline></video>
+            </div>
+            
+            <div class="controls">
+                <button id="startButton">▶️ Start Stream</button>
+                <button id="stopButton" disabled>⏹️ Stop Stream</button>
+            </div>
+            
+            <div class="info-box">
+                <h3>ℹ️ Information</h3>
+                <ul>
+                    <li><strong>Model:</strong> YOLOv11n Segmentation (Fine-tuned)</li>
+                    <li><strong>Classes:</strong> person, case, case_top, battery, screw, tool</li>
+                    <li><strong>Source:</strong> Jetson Orin Nano Super</li>
+                    <li><strong>Protocol:</strong> WebRTC</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pc = null;
+        const videoElement = document.getElementById('videoElement');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusText = document.getElementById('statusText');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const loading = document.getElementById('loading');
+
+        function updateStatus(status) {
+            statusIndicator.className = 'status-indicator ' + status;
+            switch(status) {
+                case 'disconnected':
+                    statusText.textContent = 'Disconnected';
+                    break;
+                case 'connecting':
+                    statusText.textContent = 'Connecting...';
+                    break;
+                case 'connected':
+                    statusText.textContent = 'Connected - Stream Active';
+                    break;
+            }
+        }
+
+        async function startStream() {
+            startButton.disabled = true;
+            loading.classList.add('active');
+            updateStatus('connecting');
+
+            try {
+                // Create peer connection
+                pc = new RTCPeerConnection({
+                    iceServers: [{urls: 'stun:stun.l.google.com:19302'}]
+                });
+
+                // Handle incoming tracks
+                pc.addEventListener('track', (evt) => {
+                    console.log('✅ Received track:', evt.track.kind);
+                    console.log('Track details:', evt.track);
+                    console.log('Streams:', evt.streams);
+                    if (evt.track.kind === 'video') {
+                        console.log('🎥 Setting video source...');
+                        videoElement.srcObject = evt.streams[0];
+                        
+                        // Monitor video element events
+                        videoElement.onloadedmetadata = () => {
+                            console.log('✅ Video metadata loaded');
+                        };
+                        videoElement.onplay = () => {
+                            console.log('▶️ Video playing');
+                        };
+                        videoElement.onerror = (e) => {
+                            console.error('❌ Video error:', e);
+                        };
+                        
+                        loading.classList.remove('active');
+                        updateStatus('connected');
+                        stopButton.disabled = false;
+                    }
+                });
+
+                // Handle connection state changes
+                pc.addEventListener('connectionstatechange', () => {
+                    console.log('🔌 Connection state:', pc.connectionState);
+                    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                        stopStream();
+                    }
+                });
+
+                // Handle ICE connection state
+                pc.addEventListener('iceconnectionstatechange', () => {
+                    console.log('🧊 ICE connection state:', pc.iceConnectionState);
+                });
+
+                // Handle ICE candidates
+                pc.addEventListener('icecandidate', (evt) => {
+                    if (evt.candidate) {
+                        console.log('🧊 ICE candidate:', evt.candidate.type);
+                    } else {
+                        console.log('🧊 All ICE candidates sent');
+                    }
+                });
+
+                // Add transceiver to receive video
+                console.log('📹 Adding video transceiver (recvonly)');
+                pc.addTransceiver('video', { direction: 'recvonly' });
+
+                // Create offer
+                console.log('📤 Creating offer...');
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                console.log('✅ Local description set (offer)');
+
+                // Send offer to server
+                console.log('📤 Sending offer to server...');
+                const response = await fetch('/offer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        sdp: pc.localDescription.sdp,
+                        type: pc.localDescription.type,
+                    }),
+                });
+
+                console.log('📥 Received response from server');
+                const answer = await response.json();
+                console.log('✅ Got answer, setting remote description...');
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                console.log('✅ Remote description set (answer)');
+
+            } catch (error) {
+                console.error('Error starting stream:', error);
+                alert('Failed to start stream: ' + error.message);
+                stopStream();
+            }
+        }
+
+        function stopStream() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            videoElement.srcObject = null;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            loading.classList.remove('active');
+            updateStatus('disconnected');
+        }
+
+        startButton.addEventListener('click', startStream);
+        stopButton.addEventListener('click', stopStream);
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', stopStream);
+    </script>
+</body>
+</html>
+

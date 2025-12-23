@@ -1,0 +1,13 @@
+# Core dependencies for WebRTC streaming with YOLO
+aiohttp>=3.9.0
+aiortc>=1.6.0
+av>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0,<2.0  # IMPORTANT: NumPy 2.x breaks PyTorch on Jetson
+ultralytics>=8.0.0
+
+# Additional dependencies for Jetson Orin Nano
+# Note: Make sure you have PyTorch installed for your specific Jetson platform
+# For Jetson, use: pip3 install torch torchvision torchaudio --index-url https://developer.download.nvidia.com/compute/redist/jp/v512
+# If you encounter NumPy issues, run: pip3 install numpy==1.26.4 --force-reinstall --index-url https://pypi.org/simple/
+
