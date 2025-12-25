@@ -1,0 +1,18 @@
+# Core dependencies for YOLOv11 finetuning and inference
+opencv-python>=4.8.0
+numpy>=1.24.0,<2.0  # NumPy 2.x may cause compatibility issues with PyTorch
+ultralytics>=8.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+matplotlib>=3.7.0
+pillow>=10.0.0
+
+# For Jupyter notebooks
+ipykernel>=6.25.0
+jupyter>=1.0.0
+
+# Optional: WebRTC streaming dependencies (see requirements_webrtc.txt)
+# aiohttp>=3.9.0
+# aiortc>=1.6.0
+# av>=10.0.0
+
