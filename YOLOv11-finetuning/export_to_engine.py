@@ -42,6 +42,12 @@ def parse_args():
         action="store_true",
         help="Simplify the ONNX graph before engine build (can speed up).",
     )
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=640,
+        help="Inference image size (default 640). Match this in your inference code.",
+    )
     return parser.parse_args()
 
 
@@ -56,6 +62,7 @@ def main():
     print(f"Precision : {'FP16' if args.half else 'FP32'}")
     print(f"Workspace : {args.workspace} GB")
     print(f"Simplify  : {args.simplify}")
+    print(f"Image Size: {args.imgsz}")
     print(f"=======================\n")
 
     model = YOLO(args.weights)
@@ -65,7 +72,9 @@ def main():
         half=args.half,
         workspace=args.workspace,
         simplify=args.simplify,
+        imgsz=args.imgsz,
         verbose=True,
+        device="cuda:0",
     )
 
     print(f"\n✅ Export complete!")

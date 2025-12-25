@@ -1,7 +1,6 @@
 import os
 import cv2
 import asyncio
-import random
 import json
 from ultralytics import YOLO
 import numpy as np
@@ -9,85 +8,42 @@ from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from aiortc.contrib.media import MediaRelay
 from av import VideoFrame
-import threading
-import queue
 import time
 from fractions import Fraction
 import torch
 import gc
+from concurrent.futures import ThreadPoolExecutor
 
 # Define CLASSES
 CLASSES = ["person", "case", "case_top", "battery", "screw", "tool"]
 
-def draw_masks_and_scores(image, masks_with_scores, classes):
-    """
-    Draw segmentation masks, class labels, and confidence scores with transparency.
-    """
-    img_copy = image.copy()
-    overlay = img_copy.copy()
-    alpha = 0.4  # Transparency factor
-
-    # Define a set of distinct colors for classes (BGR format for OpenCV)
-    class_colors = [
-      (0, 0, 50),       # person: blueish
-      (255, 165, 0),    # case: orange
-      (75, 40, 0),      # case_top: yellow
-      (192, 192, 192),  # battery: silver
-      (140, 0, 140),    # screw: violet
-      (0, 200, 0)       # tool: green
-    ]
-
-    for class_id, polygon_points, score in masks_with_scores:
-        if polygon_points is not None and len(polygon_points) > 0:
-            color = class_colors[class_id % len(class_colors)] if class_id < len(class_colors) else (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-
-            # polygon_points can be numpy array (N,2) or list of tuples
-            pts = np.asarray(polygon_points, dtype=np.int32).reshape((-1, 1, 2))
-
-            # Fill the polygon on the overlay with semi-transparency
-            cv2.fillPoly(overlay, [pts], color)
-
-            # Draw polygon outline
-            cv2.polylines(img_copy, [pts], True, color, 1)
-
-            # Put label with score
-            label_text = classes[class_id] if class_id < len(classes) else f"Unknown Class {class_id}"
-            label_text = f"{label_text} {score:.2f}"
-
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.2
-            font_thickness = 1
-            text_size = cv2.getTextSize(label_text, font, font_scale, font_thickness)[0]
-
-            # Place text near the first point of the polygon
-            text_x = int(polygon_points[0][0])
-            text_y = int(polygon_points[0][1]) - 10 if int(polygon_points[0][1]) - 10 > text_size[1] else int(polygon_points[0][1]) + text_size[1] + 10
-
-            # Draw background for text
-            cv2.rectangle(img_copy, (text_x, text_y - text_size[1] - 5),
-                          (text_x + text_size[0] + 5, text_y + 5), color, -1)
-            cv2.putText(img_copy, label_text, (text_x, text_y), font, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
-
-    # Combine the original image with the overlay using the transparency factor
-    img_with_masks = cv2.addWeighted(overlay, alpha, img_copy, 1 - alpha, 0)
-    return img_with_masks
+# Pre-define colors as numpy array for faster access (BGR format)
+CLASS_COLORS = np.array([
+    [50, 0, 0],       # person: blueish
+    [0, 165, 255],    # case: orange
+    [0, 40, 75],      # case_top: yellow
+    [192, 192, 192],  # battery: silver
+    [140, 0, 140],    # screw: violet
+    [0, 200, 0]       # tool: green
+], dtype=np.uint8)
 
 
 class YOLOVideoStreamTrack(VideoStreamTrack):
     """
-    A video stream track that processes video frames through YOLO model.
+    Optimized video stream track for YOLO inference.
     """
     
     def __init__(self, video_path, model, device='cuda:0', use_fp16=False):
         super().__init__()
-        self.kind = "video"  # Explicitly set track kind
+        self.kind = "video"
         self.video_path = video_path
         self.model = model
         self.device = device
         self.use_fp16 = use_fp16
         self.cap = cv2.VideoCapture(video_path)
         self.frame_count = 0
-        # Downscale frames aggressively to reduce GPU memory
+        
+        # Target resolution
         self.target_width = 640
         self.target_height = 360
         
@@ -95,153 +51,165 @@ class YOLOVideoStreamTrack(VideoStreamTrack):
             raise RuntimeError(f"Could not open video file: {video_path}")
         
         # Get video properties
-        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS))
-        if self.fps == 0:
-            self.fps = 30  # Default fallback
+        self.fps = int(self.cap.get(cv2.CAP_PROP_FPS)) or 30
         
-        # Enable CUDA optimizations if available
+        # CUDA setup
         if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True  # Enable cuDNN auto-tuner
-            print(f"[GPU] CUDA enabled: {torch.cuda.get_device_name(0)}")
-            print(f"[GPU] CUDA version: {torch.version.cuda}")
-            print(f"[GPU] Memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.1f} MB")
-            print(f"[GPU] FP16 mode: {'Enabled' if use_fp16 else 'Disabled (more stable)'}")
-        else:
-            print("[WARNING] CUDA not available, using CPU")
+            torch.backends.cudnn.benchmark = True
+            print(f"[GPU] {torch.cuda.get_device_name(0)}, FP16: {use_fp16}")
         
         # WebRTC timing
         self.VIDEO_CLOCK_RATE = 90000
         self.VIDEO_TIME_BASE = Fraction(1, self.VIDEO_CLOCK_RATE)
-        self.frame_duration = 1.0 / self.fps
         self.pts_counter = 0
         
-        # FPS calculation
-        self.last_fps_time = time.time()
-        self.fps_frame_count = 0
+        # FPS calculation - use simple moving average
+        self.fps_start_time = time.perf_counter()
         self.current_fps = 0.0
-        self.fps_update_interval = 10  # Update FPS every N frames
         
-        print(f"Video FPS: {self.fps}")
-        print(f"[VideoTrack] Initialized track, kind={self.kind}, readyState={self.readyState}")
+        # Pre-allocate overlay buffer (reused each frame to avoid allocation)
+        self.overlay = np.zeros((self.target_height, self.target_width, 3), dtype=np.uint8)
+        
+        # Executor for blocking operations
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        
+        # Font settings (pre-computed once)
+        self.font = cv2.FONT_HERSHEY_SIMPLEX
+        self.font_scale = 0.4
+        self.font_thickness = 1
 
-    async def recv(self):
+        print(f"[VideoTrack] Initialized: {self.target_width}x{self.target_height} @ {self.fps}fps")
+
+    def _draw_fast(self, image, results):
         """
-        Get the next video frame with YOLO predictions.
+        Fast drawing with minimal allocations.
+        Returns the same image (mutated in place).
         """
-        # Debug: log first call
-        if self.frame_count == 0:
-            print(f"[VideoTrack] recv() called for first time!")
+        # Check for any masks first
+        has_masks = any(r.masks is not None and len(r.masks.xy) > 0 for r in results)
+        if not has_masks:
+            return image
         
-        # Wait for next frame timing
-        await asyncio.sleep(self.frame_duration)
+        # Reuse overlay buffer - copy frame data into it
+        np.copyto(self.overlay, image)
         
+        mask_count = 0
+        for r in results:
+            if r.masks is None:
+                continue
+            
+            masks_xy = r.masks.xy
+            boxes_cls = r.boxes.cls.cpu().numpy().astype(np.int32)
+            boxes_conf = r.boxes.conf.cpu().numpy()
+            
+            for j, poly_np in enumerate(masks_xy):
+                if len(poly_np) < 3:
+                    continue
+                
+                class_id = boxes_cls[j]
+                conf = boxes_conf[j]
+                
+                # Get color (handle out of bounds)
+                color = tuple(int(c) for c in CLASS_COLORS[class_id % len(CLASS_COLORS)])
+                
+                # Convert to int32 for OpenCV
+                pts = poly_np.astype(np.int32).reshape((-1, 1, 2))
+                
+                # Fill on overlay
+                cv2.fillPoly(self.overlay, [pts], color)
+                
+                # Outline on original
+                cv2.polylines(image, [pts], True, color, 1)
+                
+                # Label at first point
+                label = f"{CLASSES[class_id] if class_id < len(CLASSES) else '?'} {conf:.2f}"
+                tx, ty = int(poly_np[0][0]), int(poly_np[0][1]) - 5
+                if ty < 15:
+                    ty = int(poly_np[0][1]) + 15
+                
+                # Simple text (no background rectangle for speed)
+                cv2.putText(image, label, (tx, ty), self.font, self.font_scale, 
+                           (255, 255, 255), self.font_thickness, cv2.LINE_AA)
+                
+                mask_count += 1
+        
+        # Blend overlay with original (alpha = 0.4)
+        cv2.addWeighted(self.overlay, 0.4, image, 0.6, 0, image)
+        
+        return image
+
+    def _process_frame(self):
+        """
+        Synchronous frame processing - runs in thread pool.
+        """
         ret, frame = self.cap.read()
         if not ret:
-            # Loop the video
+            # Loop video
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             self.frame_count = 0
             self.pts_counter = 0
-            # Reset FPS calculation
-            self.last_fps_time = time.time()
-            self.fps_frame_count = 0
+            self.fps_start_time = time.perf_counter()
             ret, frame = self.cap.read()
             if not ret:
                 raise Exception("Failed to read video frame")
         
-        # Downscale to reduce memory and compute load
-        if frame.shape[1] > self.target_width:
-            frame = cv2.resize(frame, (self.target_width, self.target_height), interpolation=cv2.INTER_AREA)
+        # Resize if needed (INTER_LINEAR is fast)
+        h, w = frame.shape[:2]
+        if w != self.target_width or h != self.target_height:
+            frame = cv2.resize(frame, (self.target_width, self.target_height), 
+                              interpolation=cv2.INTER_LINEAR)
         
-        # Run YOLO inference with GPU optimizations (YOLO handles BGR internally)
-        try:
-            results = self.model(
-                frame, 
-                verbose=False,
-                device=self.device,
-                half=self.use_fp16,  # FP16 optional (can cause memory issues)
-                conf=0.35,  # Slightly higher to reduce detections
-                iou=0.45,   # IoU threshold for NMS
-                max_det=20,  # Strongly reduced to save memory
-                imgsz=max(self.target_width, self.target_height)  # Keep inference small
-            )
-        except RuntimeError as e:
-            if "out of memory" in str(e).lower():
-                print(f"[WARNING] GPU Out of Memory - clearing cache and retrying...")
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                # Retry with cleared memory
-                results = self.model(
-                    frame, 
-                    verbose=False,
-                    device=self.device,
-                    half=False,  # Disable FP16 on retry
-                )
-            else:
-                raise
+        # YOLO inference
+        results = self.model(
+            frame, 
+            verbose=False,
+            device=self.device,
+            half=self.use_fp16,
+            conf=0.35,
+            iou=0.45,
+            max_det=20,
+            imgsz=self.target_width  # Use width since it's larger
+        )
         
-        # Collect segmentation masks using masks.xy (pre-computed polygons)
-        predicted_masks_with_scores = []
-        for r in results:
-            if r.masks is not None and len(r.masks.xy) > 0:
-                for j, poly_np in enumerate(r.masks.xy):
-                    class_id = int(r.boxes.cls[j])
-                    confidence_score = float(r.boxes.conf[j])
-                    # poly_np is already a numpy array of shape (N, 2) in image coordinates
-                    predicted_masks_with_scores.append((class_id, poly_np, confidence_score))
+        # Draw predictions (modifies frame in place)
+        self._draw_fast(frame, results)
         
-        # Draw segmentation masks (in BGR format like test_yolov11n-seg.py)
-        img_with_predictions = draw_masks_and_scores(frame, predicted_masks_with_scores, CLASSES)
+        # Calculate FPS (simple: frames / total_time)
+        self.frame_count += 1
+        elapsed = time.perf_counter() - self.fps_start_time
+        if elapsed > 0:
+            self.current_fps = self.frame_count / elapsed
         
-        # Calculate FPS
-        self.fps_frame_count += 1
-        if self.fps_frame_count >= self.fps_update_interval:
-            current_time = time.time()
-            elapsed = current_time - self.last_fps_time
-            self.current_fps = self.fps_frame_count / elapsed
-            self.last_fps_time = current_time
-            self.fps_frame_count = 0
+        # Reset counter periodically to get recent FPS
+        if self.frame_count >= 100:
+            self.frame_count = 0
+            self.fps_start_time = time.perf_counter()
         
         # Display FPS
-        cv2.putText(img_with_predictions, f"FPS: {self.current_fps:.1f}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, f"FPS: {self.current_fps:.1f}", (10, 25),
+                    self.font, 0.7, (0, 255, 0), 2)
         
-        self.frame_count += 1
-        
-        # Convert BGR to RGB for WebRTC output
-        img_rgb = cv2.cvtColor(img_with_predictions, cv2.COLOR_BGR2RGB)
-        
-        # Convert to VideoFrame for WebRTC
-        new_frame = VideoFrame.from_ndarray(img_rgb, format="rgb24")
-        new_frame.pts = self.pts_counter
-        new_frame.time_base = self.VIDEO_TIME_BASE
-        
-        # Increment pts by the number of clock ticks per frame
+        # Create VideoFrame - use bgr24 to avoid color conversion
+        video_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        video_frame.pts = self.pts_counter
+        video_frame.time_base = self.VIDEO_TIME_BASE
         self.pts_counter += int(self.VIDEO_CLOCK_RATE / self.fps)
         
-        # Periodic memory cleanup to prevent memory leaks
-        if self.frame_count % 50 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            gc.collect()
-        
-        # Debug output every 30 frames
-        if self.frame_count % 30 == 0:
-            gpu_mem = ""
-            if torch.cuda.is_available():
-                gpu_mem_mb = torch.cuda.memory_allocated(0) / 1024**2
-                gpu_util = torch.cuda.memory_reserved(0) / 1024**2
-                gpu_mem = f", GPU Mem={gpu_mem_mb:.0f}MB/{gpu_util:.0f}MB"
-            print(f"Sent frame {self.frame_count}, FPS={self.current_fps:.1f}, masks={len(predicted_masks_with_scores)}{gpu_mem}")
-        
-        return new_frame
+        return video_frame
+
+    async def recv(self):
+        """Get next video frame asynchronously."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self.executor, self._process_frame)
 
     def stop(self):
-        """Release video capture."""
+        """Cleanup resources."""
         if self.cap:
             self.cap.release()
+        self.executor.shutdown(wait=False)
 
 
-# Global variables
+# Global state
 pcs = set()
 relay = MediaRelay()
 video_track = None
@@ -249,64 +217,56 @@ model = None
 
 
 async def index(request):
-    """Serve the main HTML page."""
-    content = open(os.path.join(os.path.dirname(__file__), "webrtc_client.html"), "r").read()
+    """Serve HTML page."""
+    html_path = os.path.join(os.path.dirname(__file__), "webrtc_client.html")
+    with open(html_path, "r") as f:
+        content = f.read()
     return web.Response(content_type="text/html", text=content)
 
 
 async def offer(request):
-    """Handle WebRTC offer from client."""
+    """Handle WebRTC offer."""
     params = await request.json()
-    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    offer_desc = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
 
     pc = RTCPeerConnection()
     pcs.add(pc)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
-        print(f"Connection state: {pc.connectionState}")
-        if pc.connectionState == "failed" or pc.connectionState == "closed":
+        print(f"Connection: {pc.connectionState}")
+        if pc.connectionState in ("failed", "closed"):
             await pc.close()
             pcs.discard(pc)
 
-    # Set remote description first
-    await pc.setRemoteDescription(offer)
+    await pc.setRemoteDescription(offer_desc)
     
-    # Create a fresh track for this connection using relay
-    global video_track, model
+    global video_track
     if video_track:
-        # Use relay to share the source track
-        local_track = relay.subscribe(video_track)
-        pc.addTrack(local_track)
-        print(f"[Server] Added relayed video track: {local_track}")
-        print(f"[Server] Source track: {video_track}, kind: {video_track.kind}")
+        pc.addTrack(relay.subscribe(video_track))
+        print(f"[Server] Track added")
     else:
-        print("[Server] WARNING: No video track available!")
+        print("[Server] WARNING: No video track!")
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
-    print(f"[Server] Answer created and sent to client")
 
     return web.Response(
         content_type="application/json",
-        text=json.dumps({
-            "sdp": pc.localDescription.sdp,
-            "type": pc.localDescription.type
-        })
+        text=json.dumps({"sdp": pc.localDescription.sdp, "type": pc.localDescription.type})
     )
 
 
 async def on_shutdown(app):
     """Cleanup on shutdown."""
-    coros = [pc.close() for pc in pcs]
-    await asyncio.gather(*coros)
+    await asyncio.gather(*[pc.close() for pc in pcs])
     pcs.clear()
     if video_track:
         video_track.stop()
 
 
 async def run_server(host="0.0.0.0", port=8080):
-    """Run the WebRTC server."""
+    """Run WebRTC server."""
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_post("/offer", offer)
@@ -317,13 +277,12 @@ async def run_server(host="0.0.0.0", port=8080):
     site = web.TCPSite(runner, host, port)
     await site.start()
     
-    print(f"WebRTC server started at http://{host}:{port}")
-    print(f"Open this URL in your browser: http://<jetson-ip>:{port}")
-    print("Press Ctrl+C to stop")
+    print(f"\n{'='*50}")
+    print(f"WebRTC server: http://{host}:{port}")
+    print(f"{'='*50}\n")
     
-    # Keep running
     try:
-        await asyncio.Future()  # Run forever
+        await asyncio.Future()
     except KeyboardInterrupt:
         pass
     finally:
@@ -331,81 +290,51 @@ async def run_server(host="0.0.0.0", port=8080):
 
 
 def main():
-    """Main function."""
+    """Main entry point."""
     global video_track, model
     
-    # Configuration
-    USE_FP16 = False  # Default to FP32 for stability; enable for speed if stable
-    
-    # Check GPU availability
+    USE_FP16 = True
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    print(f"\n{'='*60}")
-    print(f"🚀 GPU Acceleration Setup")
-    print(f"{'='*60}")
+    
+    print(f"\n{'='*50}")
+    print(f"YOLO WebRTC Server")
+    print(f"{'='*50}")
     
     if torch.cuda.is_available():
-        print(f"✅ CUDA Available: YES")
-        print(f"   Device: {torch.cuda.get_device_name(0)}")
-        print(f"   CUDA Version: {torch.version.cuda}")
-        total_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        print(f"   GPU Memory: {total_mem:.1f} GB")
-        print(f"   Using device: {device}")
-        print(f"   FP16 Mode: {'Enabled (faster)' if USE_FP16 else 'Disabled (more stable)'}")
-        
-        # Clear any existing GPU memory
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"FP16: {USE_FP16}")
         torch.cuda.empty_cache()
         gc.collect()
     else:
-        print(f"⚠️  CUDA Available: NO - Using CPU (slower)")
+        print("WARNING: CUDA not available, using CPU")
     
-    print(f"{'='*60}\n")
-    
-    # Choose model: prefer TensorRT engine if present
-    engine_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
+    # Load model (prefer TensorRT engine)
+    engine_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.engine')
     pt_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
-    if os.path.exists(engine_path):
-        model_path = engine_path
-        print(f"⚡ Using TensorRT engine: {model_path}")
-    else:
-        model_path = pt_path
-        print(f"Using PyTorch model: {model_path}")
-
+    
+    model_path = engine_path if os.path.exists(engine_path) else pt_path
+    print(f"Model: {model_path}")
+    
     model = YOLO(model_path)
     
-    # Move model to GPU and optimize (.pt only; .engine handles device internally)
+    # Warmup for .pt models
     if torch.cuda.is_available() and not model_path.endswith(".engine"):
         model.to(device)
-        # Warm up only for .pt models
-        print("🔥 Warming up GPU with tiny dummy inference...")
+        print("Warming up...")
         try:
-            dummy_img = np.zeros((320, 320, 3), dtype=np.uint8)
-            _ = model(dummy_img, verbose=False, device=device, half=USE_FP16)
+            _ = model(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False, device=device, half=USE_FP16)
             torch.cuda.empty_cache()
-            gc.collect()
-            print("✅ GPU warmed up and ready!")
         except Exception as e:
-            print(f"⚠️  Warning during warm-up: {e}")
-            print("   Continuing anyway...")
+            print(f"Warmup warning: {e}")
     
-    print(f"✅ Loaded fine-tuned model from: {model_path}")
-    
-    # Path to the video file
+    # Create video track
     video_path = os.path.join('testdata', 'rec7-89.mp4')
-    
-    # Create video track with GPU support
     video_track = YOLOVideoStreamTrack(video_path, model, device=device, use_fp16=USE_FP16)
-    print(f"✅ Loaded video from: {video_path}")
-    print(f"[Server] Video track created: {video_track}")
+    print(f"Video: {video_path}")
+    print(f"{'='*50}\n")
     
-    if torch.cuda.is_available():
-        print(f"\n💡 Tip: Set USE_FP16=True in code for 2x speed (if no memory errors)")
-    
-    print(f"\n{'='*60}\n")
-    
-    # Run the server
-    asyncio.run(run_server(host="0.0.0.0", port=8080))
+    asyncio.run(run_server())
 
 
 if __name__ == "__main__":
     main()
-
