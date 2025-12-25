@@ -12,54 +12,59 @@
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
             padding: 20px;
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             width: 100%;
             background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            overflow: hidden;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
         }
         
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 30px;
-            text-align: center;
+            padding: 40px;
+            border-bottom: 1px solid #f0f0f0;
         }
         
         .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+            font-size: 1.8em;
+            font-weight: 400;
+            margin-bottom: 8px;
+            color: #000;
+            letter-spacing: -0.5px;
         }
         
         .header p {
-            font-size: 1.1em;
-            opacity: 0.9;
+            font-size: 1em;
+            color: #666;
+            font-weight: 300;
         }
         
         .content {
-            padding: 30px;
+            padding: 40px;
         }
         
-        .video-container {
+        .video-wrapper {
             position: relative;
-            width: 100%;
             background: #000;
-            border-radius: 10px;
-            overflow: hidden;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            margin-bottom: 30px;
+        }
+
+        .video-container {
+            width: 100%;
+            display: block;
+            line-height: 0;
         }
         
         #videoElement {
@@ -71,112 +76,122 @@
         .controls {
             display: flex;
             gap: 15px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
         }
         
         button {
-            padding: 15px 30px;
-            font-size: 16px;
+            padding: 12px 24px;
+            font-size: 14px;
             font-weight: 600;
-            border: none;
-            border-radius: 10px;
+            border: 1px solid #000;
+            border-radius: 0;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: all 0.2s ease;
             text-transform: uppercase;
             letter-spacing: 1px;
+            min-width: 140px;
         }
         
         #startButton {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            background: #000;
             color: white;
         }
         
         #startButton:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(17, 153, 142, 0.4);
+            background: #333;
+            border-color: #333;
         }
         
         #stopButton {
-            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
-            color: white;
+            background: white;
+            color: #000;
         }
         
         #stopButton:hover:not(:disabled) {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 20px rgba(235, 51, 73, 0.4);
+            background: #f5f5f5;
         }
         
         button:disabled {
-            opacity: 0.5;
+            opacity: 0.3;
             cursor: not-allowed;
+            border-color: #ccc;
+            background: #f5f5f5;
+            color: #999;
         }
         
         .status {
-            text-align: center;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            font-size: 0.9em;
+            color: #666;
             margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #f0f0f0;
         }
         
         .status-indicator {
             display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
-            animation: pulse 2s ease-in-out infinite;
-        }
-        
-        .status-indicator.disconnected {
-            background-color: #dc3545;
-        }
-        
-        .status-indicator.connecting {
-            background-color: #ffc107;
+            width: 8px;
+            height: 8px;
+            background-color: #ccc;
+            margin-right: 10px;
         }
         
         .status-indicator.connected {
-            background-color: #28a745;
+            background-color: #000;
+        }
+
+        .status-indicator.connecting {
+            background-color: #666;
+            animation: pulse 1.5s infinite;
         }
         
         @keyframes pulse {
-            0%, 100% {
-                opacity: 1;
-            }
-            50% {
-                opacity: 0.5;
-            }
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
         
         .info-box {
-            background: #e3f2fd;
-            border-left: 4px solid #2196f3;
-            padding: 20px;
-            border-radius: 5px;
-            margin-top: 20px;
+            background: #fcfcfc;
+            border: 1px solid #f0f0f0;
+            padding: 25px;
         }
         
         .info-box h3 {
-            color: #1976d2;
-            margin-bottom: 10px;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #999;
+            margin-bottom: 15px;
+            font-weight: 600;
         }
         
         .info-box ul {
-            margin-left: 20px;
-            color: #424242;
+            list-style: none;
         }
         
         .info-box li {
-            margin: 8px 0;
+            margin: 10px 0;
+            font-size: 0.95em;
+            display: grid;
+            grid-template-columns: 100px 1fr;
+            color: #333;
+        }
+        
+        .info-box li strong {
+            color: #888;
+            font-weight: 500;
         }
         
         .loading {
-            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
             text-align: center;
-            padding: 20px;
+            color: white;
+            display: none;
+            z-index: 10;
         }
         
         .loading.active {
@@ -184,12 +199,12 @@
         }
         
         .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top: 2px solid #fff;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
+            width: 24px;
+            height: 24px;
+            animation: spin 0.8s linear infinite;
             margin: 0 auto 10px;
         }
         
@@ -202,37 +217,38 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎯 YOLOv11 Real-time Detection Stream</h1>
+            <h1>YOLOv11 Real-time Detection Stream</h1>
             <p>Live object detection and segmentation from Jetson Orin Nano</p>
         </div>
         
         <div class="content">
             <div class="status">
-                <span class="status-indicator disconnected" id="statusIndicator"></span>
-                <strong>Status:</strong> <span id="statusText">Disconnected</span>
+                <span class="status-indicator" id="statusIndicator"></span>
+                <span id="statusText">Disconnected</span>
             </div>
             
-            <div class="loading" id="loading">
-                <div class="spinner"></div>
-                <p>Connecting to stream...</p>
-            </div>
-            
-            <div class="video-container">
-                <video id="videoElement" autoplay playsinline></video>
+            <div class="video-wrapper">
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <span>Connecting...</span>
+                </div>
+                <div class="video-container">
+                    <video id="videoElement" autoplay playsinline></video>
+                </div>
             </div>
             
             <div class="controls">
-                <button id="startButton">▶️ Start Stream</button>
-                <button id="stopButton" disabled>⏹️ Stop Stream</button>
+                <button id="startButton">Start Stream</button>
+                <button id="stopButton" disabled>Stop Stream</button>
             </div>
             
             <div class="info-box">
-                <h3>ℹ️ Information</h3>
+                <h3>Information</h3>
                 <ul>
-                    <li><strong>Model:</strong> YOLOv11n Segmentation (Fine-tuned)</li>
-                    <li><strong>Classes:</strong> person, case, case_top, battery, screw, tool</li>
-                    <li><strong>Source:</strong> Jetson Orin Nano Super</li>
-                    <li><strong>Protocol:</strong> WebRTC</li>
+                    <li><strong>Model</strong> YOLOv11n Segmentation (Fine-tuned)</li>
+                    <li><strong>Classes</strong> person, case, case_top, battery, screw, tool</li>
+                    <li><strong>Source</strong> Jetson Orin Nano Super</li>
+                    <li><strong>Protocol</strong> WebRTC</li>
                 </ul>
             </div>
         </div>
@@ -275,22 +291,19 @@
 
                 // Handle incoming tracks
                 pc.addEventListener('track', (evt) => {
-                    console.log('✅ Received track:', evt.track.kind);
-                    console.log('Track details:', evt.track);
-                    console.log('Streams:', evt.streams);
+                    console.log('Received track:', evt.track.kind);
                     if (evt.track.kind === 'video') {
-                        console.log('🎥 Setting video source...');
+                        console.log('Setting video source...');
                         videoElement.srcObject = evt.streams[0];
                         
-                        // Monitor video element events
                         videoElement.onloadedmetadata = () => {
-                            console.log('✅ Video metadata loaded');
+                            console.log('Video metadata loaded');
                         };
                         videoElement.onplay = () => {
-                            console.log('▶️ Video playing');
+                            console.log('Video playing');
                         };
                         videoElement.onerror = (e) => {
-                            console.error('❌ Video error:', e);
+                            console.error('Video error:', e);
                         };
                         
                         loading.classList.remove('active');
@@ -301,38 +314,22 @@
 
                 // Handle connection state changes
                 pc.addEventListener('connectionstatechange', () => {
-                    console.log('🔌 Connection state:', pc.connectionState);
+                    console.log('Connection state:', pc.connectionState);
                     if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
                         stopStream();
                     }
                 });
 
-                // Handle ICE connection state
-                pc.addEventListener('iceconnectionstatechange', () => {
-                    console.log('🧊 ICE connection state:', pc.iceConnectionState);
-                });
-
-                // Handle ICE candidates
-                pc.addEventListener('icecandidate', (evt) => {
-                    if (evt.candidate) {
-                        console.log('🧊 ICE candidate:', evt.candidate.type);
-                    } else {
-                        console.log('🧊 All ICE candidates sent');
-                    }
-                });
-
                 // Add transceiver to receive video
-                console.log('📹 Adding video transceiver (recvonly)');
                 pc.addTransceiver('video', { direction: 'recvonly' });
 
                 // Create offer
-                console.log('📤 Creating offer...');
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                console.log('✅ Local description set (offer)');
+                console.log('Local description set (offer)');
 
                 // Send offer to server
-                console.log('📤 Sending offer to server...');
+                console.log('Sending offer to server...');
                 const response = await fetch('/offer', {
                     method: 'POST',
                     headers: {
@@ -344,11 +341,10 @@
                     }),
                 });
 
-                console.log('📥 Received response from server');
                 const answer = await response.json();
-                console.log('✅ Got answer, setting remote description...');
+                console.log('Got answer, setting remote description...');
                 await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                console.log('✅ Remote description set (answer)');
+                console.log('Remote description set (answer)');
 
             } catch (error) {
                 console.error('Error starting stream:', error);
@@ -371,10 +367,7 @@
 
         startButton.addEventListener('click', startStream);
         stopButton.addEventListener('click', stopStream);
-
-        // Cleanup on page unload
         window.addEventListener('beforeunload', stopStream);
     </script>
 </body>
 </html>
-
