@@ -53,10 +53,10 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvi
 
 ### Step 3: Install Project Dependencies
 
-Navigate to the YOLOv11-finetuning directory and install requirements:
+Navigate to the yolov11_finetuned directory and install requirements:
 
 ```bash
-cd YOLOv11-finetuning
+cd yolov11_finetuned
 pip install -r requirements.txt
 ```
 
@@ -134,7 +134,7 @@ jupyter notebook finetuning_yolov11m-seg.ipynb
 ## 📁 File Structure
 
 ```
-YOLOv11-finetuning/
+yolov11_finetuned/
 ├── README.md                           # This file
 ├── requirements.txt                    # Python dependencies
 ├── requirements_webrtc.txt            # WebRTC-specific dependencies

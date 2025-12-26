@@ -2,7 +2,7 @@
 """
 Export a YOLOv11 PyTorch .pt model to TensorRT .engine for Jetson.
 
-Usage (from YOLOv11-finetuning directory):
+Usage (from yolov11_finetuned directory):
   python3 export_to_engine.py \
     --weights runs/segment/yolov11n_seg_custom/weights/best.pt \
     --half \

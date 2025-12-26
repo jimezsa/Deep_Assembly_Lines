@@ -5,6 +5,7 @@ This guide explains how to set up real-time video streaming from your Jetson Ori
 ## Overview
 
 The system consists of:
+
 - **Server (Jetson Orin Nano)**: Runs YOLO inference and streams processed video via WebRTC
 - **Client (Your Laptop)**: Web browser that connects to the server and displays the stream
 
@@ -22,7 +23,7 @@ The system consists of:
 ### 1. Install Dependencies on Jetson
 
 ```bash
-cd /workspaces/Documents/Human-Activity-Understanding-Final-Project/YOLOv11-finetuning
+cd /workspaces/Documents/Human-Activity-Understanding-Final-Project/yolov11_finetuned
 
 # Install WebRTC dependencies
 pip3 install -r requirements_webrtc.txt
@@ -72,12 +73,13 @@ Note down the IP address (e.g., `192.168.1.100`)
 ### 1. Start the Server on Jetson
 
 ```bash
-cd /workspaces/Documents/Human-Activity-Understanding-Final-Project/YOLOv11-finetuning
+cd /workspaces/Documents/Human-Activity-Understanding-Final-Project/yolov11_finetuned
 
 python3 test_yolov11n-seg_webrtc.py
 ```
 
 You should see output like:
+
 ```
 Loaded fine-tuned model from: runs/segment/yolov11n_seg_custom/weights/best.pt
 Loaded video from: testdata/rec7-89.mp4
@@ -102,10 +104,12 @@ On your local laptop:
 ## Usage
 
 ### Controls
+
 - **Start Stream**: Initiates the WebRTC connection and starts receiving video
 - **Stop Stream**: Closes the connection and stops the video
 
 ### Status Indicators
+
 - 🔴 **Red**: Disconnected
 - 🟡 **Yellow**: Connecting
 - 🟢 **Green**: Connected and streaming
@@ -115,6 +119,7 @@ On your local laptop:
 ### Problem: Cannot connect to the stream
 
 **Solutions:**
+
 1. Verify both devices are on the same network
 2. Check the Jetson's IP address: `hostname -I`
 3. Ensure port 8080 is not blocked by firewall
@@ -123,6 +128,7 @@ On your local laptop:
 ### Problem: Stream is laggy or stuttering
 
 **Solutions:**
+
 1. Check network bandwidth: `iperf3 -s` on Jetson, `iperf3 -c <jetson-ip>` on laptop
 2. Reduce video resolution (modify video_path in script to use lower resolution video)
 3. Close other applications on Jetson to free up resources
@@ -131,6 +137,7 @@ On your local laptop:
 ### Problem: "Module not found" errors
 
 **Solutions:**
+
 ```bash
 # Reinstall dependencies
 pip3 install --upgrade -r requirements_webrtc.txt
@@ -149,6 +156,7 @@ Make sure the video file exists at `testdata/rec7-89.mp4`. You can modify the `v
 
 **Solution:**
 Ensure your fine-tuned model exists at:
+
 ```
 runs/segment/yolov11n_seg_custom/weights/best.pt
 ```
@@ -175,12 +183,14 @@ runs/segment/yolov11n_seg_custom/weights/best.pt
 ## Architecture Details
 
 ### Server Components
+
 - **YOLO Model**: Processes each frame for object detection
 - **VideoStreamTrack**: Custom WebRTC track that provides processed frames
 - **Web Server**: Serves the HTML client and handles WebRTC signaling
 - **MediaRelay**: Manages multiple client connections (if needed)
 
 ### Client Components
+
 - **HTML/JavaScript**: Single-page application with WebRTC client
 - **RTCPeerConnection**: Handles WebRTC connection and video stream
 
@@ -189,6 +199,7 @@ runs/segment/yolov11n_seg_custom/weights/best.pt
 ### Change Video Source
 
 Edit `test_yolov11n-seg_webrtc.py`:
+
 ```python
 # Use a different video file
 video_path = os.path.join('testdata', 'your-video.mp4')
@@ -200,6 +211,7 @@ video_path = os.path.join('testdata', 'your-video.mp4')
 ### Change Port
 
 Edit the server script:
+
 ```python
 asyncio.run(run_server(host="0.0.0.0", port=9000))  # Use port 9000
 ```
@@ -209,6 +221,7 @@ Then access via: `http://<jetson-ip>:9000`
 ### Adjust Detection Confidence
 
 In the YOLO inference call:
+
 ```python
 results = self.model(img_rgb, conf=0.5, verbose=False)  # 50% confidence threshold
 ```
@@ -233,8 +246,8 @@ results = self.model(img_rgb, conf=0.5, verbose=False)  # 50% confidence thresho
 ## Support
 
 If you encounter issues:
+
 1. Check the console output on Jetson for error messages
 2. Check browser console (F12) for JavaScript errors
 3. Verify all dependencies are installed correctly
 4. Ensure your model and video files are in the correct locations
-
