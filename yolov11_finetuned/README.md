@@ -91,13 +91,6 @@ python test_yolov11n-seg.py
 - Press `q` to quit
 - Press `p` to pause/resume the video
 
-**What to expect:**
-
-- A window will open showing the video with segmentation masks overlayed
-- FPS counter in the top-left corner
-- Color-coded masks for each detected class
-- Class labels with confidence scores
-
 ## 📦 Model Weights
 
 The fine-tuned model weights are located in:
@@ -125,7 +118,9 @@ video_path = os.path.join('testdata', 'your_video.mp4')
 
 ### Running Fine-tuning (Jupyter Notebook)
 
-To fine-tune the model with your own dataset:
+To fine-tune the model with your own dataset, it is recommended to open the notebook in **Google Colab** with a **white A100 GPU** for best performance. You can upload and run the notebook directly in Colab by clicking "Open in Colab" or by uploading `finetuning_yolov11m-seg.ipynb` to Colab yourself.
+
+Alternatively, you can run the notebook locally with:
 
 ```bash
 jupyter notebook finetuning_yolov11m-seg.ipynb
