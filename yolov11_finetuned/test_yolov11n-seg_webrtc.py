@@ -77,8 +77,14 @@ class YOLOVideoStreamTrack(VideoStreamTrack):
         self.font = cv2.FONT_HERSHEY_SIMPLEX
         self.font_scale = 0.4
         self.font_thickness = 1
+        
+        # Frame skipping for performance (process every Nth frame)
+        self.inference_interval = 3  # Process every 3rd frame
+        self.inference_counter = 0
+        self.cached_results = None  # Store last inference results
 
         print(f"[VideoTrack] Initialized: {self.target_width}x{self.target_height} @ {self.fps}fps")
+        print(f"[VideoTrack] Frame skipping: Processing 1 out of every {self.inference_interval} frames")
 
     def _draw_fast(self, image, results):
         """
@@ -149,6 +155,8 @@ class YOLOVideoStreamTrack(VideoStreamTrack):
             self.frame_count = 0
             self.pts_counter = 0
             self.fps_start_time = time.perf_counter()
+            self.inference_counter = 0
+            self.cached_results = None
             ret, frame = self.cap.read()
             if not ret:
                 raise Exception("Failed to read video frame")
@@ -159,20 +167,31 @@ class YOLOVideoStreamTrack(VideoStreamTrack):
             frame = cv2.resize(frame, (self.target_width, self.target_height), 
                               interpolation=cv2.INTER_LINEAR)
         
-        # YOLO inference
-        results = self.model(
-            frame, 
-            verbose=False,
-            device=self.device,
-            half=self.use_fp16,
-            conf=0.35,
-            iou=0.45,
-            max_det=20,
-            imgsz=self.target_width  # Use width since it's larger
-        )
+        # Only run YOLO inference every Nth frame
+        if self.inference_counter % self.inference_interval == 0:
+            # Run YOLO inference
+            results = self.model(
+                frame, 
+                verbose=False,
+                device=self.device,
+              
+                conf=0.35,
+                iou=0.45,
+                max_det=20,
+                imgsz=self.target_width  # Use width since it's larger
+            )
+            # Cache the results
+            self.cached_results = results
+        else:
+            # Use cached results from previous inference
+            results = self.cached_results
         
-        # Draw predictions (modifies frame in place)
-        self._draw_fast(frame, results)
+        # Increment inference counter
+        self.inference_counter += 1
+        
+        # Draw predictions (modifies frame in place) if we have results
+        if results is not None:
+            self._draw_fast(frame, results)
         
         # Calculate FPS (simple: frames / total_time)
         self.frame_count += 1
