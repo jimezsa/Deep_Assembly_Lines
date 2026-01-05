@@ -57,7 +57,7 @@ Navigate to the yolov11_finetuned directory and install requirements:
 
 ```bash
 cd yolov11_finetuned
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ### Step 4: Verify Installation
