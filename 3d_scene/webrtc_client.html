@@ -462,22 +462,6 @@
       <div id="cameraList"></div>
     </div>
 
-    <!-- Instructions -->
-    <div class="instructions">
-      <div class="instruction-item">
-        <span class="key">Drag</span>
-        <span>Rotate view</span>
-      </div>
-      <div class="instruction-item">
-        <span class="key">Scroll</span>
-        <span>Zoom in/out</span>
-      </div>
-      <div class="instruction-item">
-        <span class="key">Right</span>
-        <span>Pan view</span>
-      </div>
-    </div>
-
     <!-- Tooltip -->
     <div class="tooltip" id="tooltip">
       <div class="tooltip-title" id="tooltipTitle"></div>
@@ -541,10 +525,10 @@
       function initScene() {
         // Scene
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0a0a0f);
+        scene.background = new THREE.Color(0xffffff);
 
         // Add fog for depth
-        scene.fog = new THREE.Fog(0x0a0a0f, 5, 20);
+        scene.fog = new THREE.Fog(0xffffff, 5, 20);
 
         // Camera
         camera = new THREE.PerspectiveCamera(
@@ -580,7 +564,7 @@
         scene.add(directionalLight);
 
         // Grid helper (3m x 3m grid to match camera setup scale)
-        const gridHelper = new THREE.GridHelper(3, 15, 0x2a2a3a, 0x1a1a25);
+        const gridHelper = new THREE.GridHelper(3, 15, 0x888888, 0xcccccc);
         scene.add(gridHelper);
 
         // Axis helper at origin
@@ -589,7 +573,7 @@
 
         // Add origin marker
         const originGeometry = new THREE.SphereGeometry(0.03, 16, 16);
-        const originMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const originMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
         const originMarker = new THREE.Mesh(originGeometry, originMaterial);
         scene.add(originMarker);
 
