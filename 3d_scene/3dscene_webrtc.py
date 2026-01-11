@@ -385,6 +385,9 @@ async def run_server(host="0.0.0.0", port=8080):
     app.router.add_get("/api/cameras", get_cameras)
     app.router.add_get("/api/frame/{camera_id}", get_frame)
     
+    # Static files
+    app.router.add_static('/videos/', 'data', show_index=False)
+    
     app.on_shutdown.append(on_shutdown)
     
     runner = web.AppRunner(app)
