@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Multi-Camera Scene Viewer</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Space+Grotesk:wght@300;400;500;600&display=swap");
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg-primary: #0a0a0f;
+        --bg-secondary: #12121a;
+        --bg-tertiary: #1a1a25;
+        --accent-cyan: #00d4ff;
+        --accent-magenta: #ff00aa;
+        --accent-green: #00ff88;
+        --text-primary: #ffffff;
+        --text-secondary: #8888aa;
+        --text-muted: #555566;
+        --border-color: #2a2a3a;
+      }
+
+      body {
+        font-family: "Space Grotesk", sans-serif;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        min-height: 100vh;
+        overflow: hidden;
+      }
+
+      #canvas-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+      }
+
+      canvas {
+        display: block;
+      }
+
+      /* Header overlay */
+      .header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        padding: 20px 30px;
+        background: linear-gradient(
+          180deg,
+          rgba(10, 10, 15, 0.95) 0%,
+          rgba(10, 10, 15, 0) 100%
+        );
+        z-index: 100;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        pointer-events: none;
+      }
+
+      .header > * {
+        pointer-events: auto;
+      }
+
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .logo-icon {
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(
+          135deg,
+          var(--accent-cyan),
+          var(--accent-magenta)
+        );
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      .logo h1 {
+        font-size: 1.1em;
+        font-weight: 500;
+        letter-spacing: -0.5px;
+      }
+
+      .logo h1 span {
+        color: var(--accent-cyan);
+      }
+
+      .status-badge {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg-tertiary);
+        padding: 8px 16px;
+        border-radius: 20px;
+        border: 1px solid var(--border-color);
+        font-size: 0.85em;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--text-muted);
+      }
+
+      .status-dot.active {
+        background: var(--accent-green);
+        box-shadow: 0 0 10px var(--accent-green);
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+
+      /* Control panel */
+      .control-panel {
+        position: fixed;
+        bottom: 20px;
+        left: 20px;
+        background: rgba(18, 18, 26, 0.95);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        z-index: 100;
+        min-width: 280px;
+        backdrop-filter: blur(20px);
+      }
+
+      .panel-title {
+        font-size: 0.75em;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        color: var(--text-secondary);
+        margin-bottom: 15px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .control-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .control-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .control-label {
+        font-size: 0.9em;
+        color: var(--text-secondary);
+      }
+
+      .control-value {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.85em;
+        color: var(--accent-cyan);
+      }
+
+      /* Camera list panel */
+      .camera-panel {
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        background: rgba(18, 18, 26, 0.95);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        z-index: 100;
+        max-width: 260px;
+        max-height: calc(100vh - 120px);
+        overflow-y: auto;
+        backdrop-filter: blur(20px);
+      }
+
+      .camera-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+        background: var(--bg-primary);
+        border-radius: 8px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .camera-item:hover {
+        border-color: var(--accent-cyan);
+        background: rgba(0, 212, 255, 0.05);
+      }
+
+      .camera-item.selected {
+        border-color: var(--accent-magenta);
+        background: rgba(255, 0, 170, 0.1);
+      }
+
+      .camera-color {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+      }
+
+      .camera-info {
+        flex: 1;
+      }
+
+      .camera-id {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.85em;
+        color: var(--text-primary);
+      }
+
+      .camera-number {
+        font-size: 0.75em;
+        color: var(--text-muted);
+      }
+
+      /* Buttons */
+      .btn {
+        padding: 10px 20px;
+        font-size: 0.85em;
+        font-weight: 500;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-family: "Space Grotesk", sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .btn-primary {
+        background: linear-gradient(
+          135deg,
+          var(--accent-cyan),
+          var(--accent-magenta)
+        );
+        border: none;
+        color: white;
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+      }
+
+      .btn-secondary {
+        background: transparent;
+        color: var(--text-secondary);
+      }
+
+      .btn-secondary:hover {
+        background: var(--bg-tertiary);
+        color: var(--text-primary);
+      }
+
+      .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+      }
+
+      /* Loading overlay */
+      .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: var(--bg-primary);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        transition: opacity 0.5s ease;
+      }
+
+      .loading-overlay.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .loader {
+        width: 60px;
+        height: 60px;
+        border: 3px solid var(--bg-tertiary);
+        border-top-color: var(--accent-cyan);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .loading-text {
+        margin-top: 20px;
+        color: var(--text-secondary);
+        font-size: 0.9em;
+      }
+
+      /* Tooltip */
+      .tooltip {
+        position: fixed;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px 16px;
+        z-index: 200;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        max-width: 300px;
+      }
+
+      .tooltip.visible {
+        opacity: 1;
+      }
+
+      .tooltip-title {
+        font-weight: 500;
+        margin-bottom: 8px;
+        color: var(--accent-cyan);
+      }
+
+      .tooltip-content {
+        font-size: 0.85em;
+        color: var(--text-secondary);
+      }
+
+      /* Instructions */
+      .instructions {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: rgba(18, 18, 26, 0.95);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 15px 20px;
+        z-index: 100;
+        backdrop-filter: blur(20px);
+      }
+
+      .instruction-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+        font-size: 0.8em;
+        color: var(--text-secondary);
+      }
+
+      .instruction-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .key {
+        background: var(--bg-tertiary);
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 0.9em;
+        color: var(--text-primary);
+        min-width: 60px;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Loading overlay -->
+    <div class="loading-overlay" id="loading">
+      <div class="loader"></div>
+      <div class="loading-text">Initializing 3D Scene...</div>
+    </div>
+
+    <!-- Three.js canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">
+        <div class="logo-icon">3D</div>
+        <h1>Multi-Camera <span>Scene Viewer</span></h1>
+      </div>
+      <div class="status-badge">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Connecting...</span>
+      </div>
+    </div>
+
+    <!-- Control panel -->
+    <div class="control-panel">
+      <div class="panel-title">Scene Controls</div>
+      <div class="control-row">
+        <span class="control-label">Cameras</span>
+        <span class="control-value" id="cameraCount">0</span>
+      </div>
+      <div class="control-row">
+        <span class="control-label">Frame Rate</span>
+        <span class="control-value" id="frameRate">--</span>
+      </div>
+      <div class="control-row">
+        <span class="control-label">Plane Scale</span>
+        <span class="control-value" id="planeScale">0.3m</span>
+      </div>
+      <div class="control-row">
+        <span class="control-label">Look at Origin</span>
+        <input
+          type="checkbox"
+          id="lookAtOrigin"
+          style="width: 18px; height: 18px; cursor: pointer"
+        />
+      </div>
+      <div class="button-group">
+        <button class="btn btn-primary" id="startBtn">Start Streams</button>
+        <button class="btn btn-secondary" id="resetBtn">Reset View</button>
+      </div>
+      <div class="button-group" style="margin-top: 10px">
+        <button
+          class="btn btn-secondary"
+          id="reloadCamsBtn"
+          style="width: 100%"
+        >
+          Reload Cameras
+        </button>
+      </div>
+    </div>
+
+    <!-- Camera list -->
+    <div class="camera-panel">
+      <div class="panel-title">Camera Views</div>
+      <div id="cameraList"></div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="instructions">
+      <div class="instruction-item">
+        <span class="key">Drag</span>
+        <span>Rotate view</span>
+      </div>
+      <div class="instruction-item">
+        <span class="key">Scroll</span>
+        <span>Zoom in/out</span>
+      </div>
+      <div class="instruction-item">
+        <span class="key">Right</span>
+        <span>Pan view</span>
+      </div>
+    </div>
+
+    <!-- Tooltip -->
+    <div class="tooltip" id="tooltip">
+      <div class="tooltip-title" id="tooltipTitle"></div>
+      <div class="tooltip-content" id="tooltipContent"></div>
+    </div>
+
+    <!-- Three.js and OrbitControls from CDN -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import * as THREE from "three";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      // Color palette for cameras
+      const CAMERA_COLORS = [
+        0x00d4ff, // cyan
+        0xff00aa, // magenta
+        0x00ff88, // green
+        0xffaa00, // orange
+        0xff5555, // red
+        0x55ff55, // lime
+        0x5555ff, // blue
+        0xffff55, // yellow
+      ];
+
+      // Scene state
+      let scene, camera, renderer, controls;
+      let cameraPlanes = {};
+      let cameraFrustums = {};
+      let calibrationData = {};
+      let availableCameras = [];
+      let streaming = false;
+      let streamIntervals = {};
+      let frameCount = 0;
+      let lastFpsTime = performance.now();
+
+      // DOM elements
+      const container = document.getElementById("canvas-container");
+      const loadingOverlay = document.getElementById("loading");
+      const statusDot = document.getElementById("statusDot");
+      const statusText = document.getElementById("statusText");
+      const cameraCountEl = document.getElementById("cameraCount");
+      const frameRate = document.getElementById("frameRate");
+      const cameraListEl = document.getElementById("cameraList");
+      const startBtn = document.getElementById("startBtn");
+      const resetBtn = document.getElementById("resetBtn");
+      const tooltip = document.getElementById("tooltip");
+      const tooltipTitle = document.getElementById("tooltipTitle");
+      const tooltipContent = document.getElementById("tooltipContent");
+      const lookAtOriginCb = document.getElementById("lookAtOrigin");
+      const reloadCamsBtn = document.getElementById("reloadCamsBtn");
+
+      // Initialize Three.js scene
+      function initScene() {
+        // Scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a0f);
+
+        // Add fog for depth
+        scene.fog = new THREE.Fog(0x0a0a0f, 5, 20);
+
+        // Camera
+        camera = new THREE.PerspectiveCamera(
+          60,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          100
+        );
+        // Position to see the multi-camera setup from above and side
+        camera.position.set(1.5, 1.5, 2.5);
+        camera.lookAt(0, 0, 0);
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // Controls
+        controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 0.5;
+        controls.maxDistance = 15;
+        controls.target.set(0, 0, 0);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(5, 10, 5);
+        scene.add(directionalLight);
+
+        // Grid helper (3m x 3m grid to match camera setup scale)
+        const gridHelper = new THREE.GridHelper(3, 15, 0x2a2a3a, 0x1a1a25);
+        scene.add(gridHelper);
+
+        // Axis helper at origin
+        const axesHelper = new THREE.AxesHelper(0.5);
+        scene.add(axesHelper);
+
+        // Add origin marker
+        const originGeometry = new THREE.SphereGeometry(0.03, 16, 16);
+        const originMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const originMarker = new THREE.Mesh(originGeometry, originMaterial);
+        scene.add(originMarker);
+
+        // Add workspace box (represents the area cameras are viewing)
+        const workspaceGeometry = new THREE.BoxGeometry(0.4, 0.1, 0.3);
+        const workspaceEdges = new THREE.EdgesGeometry(workspaceGeometry);
+        const workspaceMaterial = new THREE.LineBasicMaterial({
+          color: 0x00ff88,
+          opacity: 0.5,
+          transparent: true,
+        });
+        const workspaceBox = new THREE.LineSegments(
+          workspaceEdges,
+          workspaceMaterial
+        );
+        workspaceBox.position.set(0, 0.05, 0);
+        scene.add(workspaceBox);
+
+        // Handle resize
+        window.addEventListener("resize", onWindowResize);
+
+        // Raycaster for mouse interaction
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        renderer.domElement.addEventListener("mousemove", (event) => {
+          mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+          mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+          raycaster.setFromCamera(mouse, camera);
+          const planes = Object.values(cameraPlanes);
+          const intersects = raycaster.intersectObjects(planes);
+
+          if (intersects.length > 0) {
+            const camId = intersects[0].object.userData.cameraId;
+            showTooltip(event.clientX, event.clientY, camId);
+          } else {
+            hideTooltip();
+          }
+        });
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      // Load calibration data
+      async function loadCalibration() {
+        try {
+          const response = await fetch("/api/calibration");
+          calibrationData = await response.json();
+          console.log("Calibration loaded:", Object.keys(calibrationData));
+          return calibrationData;
+        } catch (error) {
+          console.error("Failed to load calibration:", error);
+          return {};
+        }
+      }
+
+      // Load available cameras
+      async function loadCameras() {
+        try {
+          const response = await fetch("/api/cameras");
+          return await response.json();
+        } catch (error) {
+          console.error("Failed to load cameras:", error);
+          return [];
+        }
+      }
+
+      // Create camera plane with video texture
+      function createCameraPlane(cameraId, colorIndex) {
+        const planeWidth = 0.3; // 30cm in scene units (meters)
+        const planeHeight = 0.17; // Maintain 16:9 aspect ratio
+
+        // Create plane geometry
+        const geometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+
+        // Create canvas for texture
+        const canvas = document.createElement("canvas");
+        canvas.width = 320;
+        canvas.height = 180;
+        const ctx = canvas.getContext("2d");
+
+        // Initial placeholder
+        ctx.fillStyle = "#1a1a25";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#555566";
+        ctx.font = "14px JetBrains Mono";
+        ctx.textAlign = "center";
+        ctx.fillText(`Camera ${cameraId}`, canvas.width / 2, canvas.height / 2);
+
+        // Create texture
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+
+        // Material
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          side: THREE.DoubleSide,
+        });
+
+        // Mesh
+        const plane = new THREE.Mesh(geometry, material);
+        plane.userData = {
+          cameraId: cameraId,
+          canvas: canvas,
+          ctx: ctx,
+          texture: texture,
+        };
+
+        // Add border frame
+        const borderGeometry = new THREE.EdgesGeometry(geometry);
+        const borderMaterial = new THREE.LineBasicMaterial({
+          color: CAMERA_COLORS[colorIndex % CAMERA_COLORS.length],
+        });
+        const border = new THREE.LineSegments(borderGeometry, borderMaterial);
+        plane.add(border);
+
+        return plane;
+      }
+
+      // Create camera frustum visualization
+      function createCameraFrustum(cameraId, colorIndex) {
+        const color = CAMERA_COLORS[colorIndex % CAMERA_COLORS.length];
+        const frustumLength = 0.15;
+        const frustumWidth = 0.08;
+        const frustumHeight = 0.045;
+
+        // Create frustum lines - pointing along -Z (Three.js camera convention)
+        const points = [
+          // Origin
+          new THREE.Vector3(0, 0, 0),
+          // Four corners of far plane (negative Z direction)
+          new THREE.Vector3(-frustumWidth, -frustumHeight, -frustumLength),
+          new THREE.Vector3(frustumWidth, -frustumHeight, -frustumLength),
+          new THREE.Vector3(frustumWidth, frustumHeight, -frustumLength),
+          new THREE.Vector3(-frustumWidth, frustumHeight, -frustumLength),
+        ];
+
+        const lineGeometry = new THREE.BufferGeometry();
+        const linePositions = [
+          // Lines from origin to corners
+          0,
+          0,
+          0,
+          points[1].x,
+          points[1].y,
+          points[1].z,
+          0,
+          0,
+          0,
+          points[2].x,
+          points[2].y,
+          points[2].z,
+          0,
+          0,
+          0,
+          points[3].x,
+          points[3].y,
+          points[3].z,
+          0,
+          0,
+          0,
+          points[4].x,
+          points[4].y,
+          points[4].z,
+          // Rectangle at far plane
+          points[1].x,
+          points[1].y,
+          points[1].z,
+          points[2].x,
+          points[2].y,
+          points[2].z,
+          points[2].x,
+          points[2].y,
+          points[2].z,
+          points[3].x,
+          points[3].y,
+          points[3].z,
+          points[3].x,
+          points[3].y,
+          points[3].z,
+          points[4].x,
+          points[4].y,
+          points[4].z,
+          points[4].x,
+          points[4].y,
+          points[4].z,
+          points[1].x,
+          points[1].y,
+          points[1].z,
+        ];
+
+        lineGeometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(linePositions, 3)
+        );
+        const lineMaterial = new THREE.LineBasicMaterial({
+          color: color,
+          opacity: 0.7,
+          transparent: true,
+        });
+        const frustum = new THREE.LineSegments(lineGeometry, lineMaterial);
+
+        // Camera body (small box)
+        const bodyGeometry = new THREE.BoxGeometry(0.04, 0.03, 0.02);
+        const bodyMaterial = new THREE.MeshBasicMaterial({ color: color });
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.z = 0.01;
+        frustum.add(body);
+
+        return frustum;
+      }
+
+      // Position camera in scene based on extrinsics
+      function positionCamera(cameraId, plane, frustum, lookAtOrigin = false) {
+        const calibration = calibrationData[cameraId];
+        if (!calibration || !calibration.extrinsics) {
+          console.warn(`No extrinsics for camera ${cameraId}`);
+          return;
+        }
+
+        const ext = calibration.extrinsics;
+
+        // Extract rotation matrix R and translation vector t from 4x4 matrix
+        // The extrinsics are camera-to-world transforms
+        const R = [
+          [ext[0][0], ext[0][1], ext[0][2]],
+          [ext[1][0], ext[1][1], ext[1][2]],
+          [ext[2][0], ext[2][1], ext[2][2]],
+        ];
+        const t = [ext[0][3], ext[1][3], ext[2][3]];
+
+        // Convert from OpenCV to Three.js coordinate system:
+        // OpenCV: X-right, Y-down, Z-forward
+        // Three.js: X-right, Y-up, Z-backward
+        const position = new THREE.Vector3(
+          t[0],
+          -t[1], // Flip Y
+          -t[2] // Flip Z
+        );
+
+        let quaternion = new THREE.Quaternion();
+
+        if (lookAtOrigin) {
+          // Make camera look at origin (workspace center)
+          const tempObj = new THREE.Object3D();
+          tempObj.position.copy(position);
+          tempObj.lookAt(new THREE.Vector3(0, 0, 0));
+          quaternion.copy(tempObj.quaternion);
+        } else {
+          // Use rotation from extrinsics
+          // Convert rotation: R' = F * R * F where F = diag(1,-1,-1)
+          const rotMatrix = new THREE.Matrix4();
+          rotMatrix.set(
+            R[0][0],
+            -R[0][1],
+            -R[0][2],
+            0,
+            -R[1][0],
+            R[1][1],
+            R[1][2],
+            0,
+            -R[2][0],
+            R[2][1],
+            R[2][2],
+            0,
+            0,
+            0,
+            0,
+            1
+          );
+          quaternion.setFromRotationMatrix(rotMatrix);
+        }
+
+        // Position the frustum at camera location
+        frustum.position.copy(position);
+        frustum.quaternion.copy(quaternion);
+
+        // Position plane in front of camera (along -Z in camera local space)
+        const planeOffset = 0.15;
+        const lookDir = new THREE.Vector3(0, 0, -1);
+        lookDir.applyQuaternion(quaternion);
+
+        plane.position.copy(position).addScaledVector(lookDir, planeOffset);
+        plane.quaternion.copy(quaternion);
+
+        console.log(
+          `Camera ${cameraId} (#${calibration.number}) pos:`,
+          position.toArray().map((v) => v.toFixed(3))
+        );
+      }
+
+      // Reload all camera positions with current settings
+      function reloadCameraPositions() {
+        const lookAtOrigin = lookAtOriginCb.checked;
+
+        availableCameras.forEach((cameraId) => {
+          const plane = cameraPlanes[cameraId];
+          const frustum = cameraFrustums[cameraId];
+          if (plane && frustum) {
+            positionCamera(cameraId, plane, frustum, lookAtOrigin);
+          }
+        });
+
+        console.log(`Reloaded cameras: lookAtOrigin=${lookAtOrigin}`);
+      }
+
+      // Create UI for camera list
+      function createCameraListUI(cameras) {
+        cameraListEl.innerHTML = "";
+
+        cameras.forEach((camId, index) => {
+          const item = document.createElement("div");
+          item.className = "camera-item";
+          item.dataset.cameraId = camId;
+
+          const color = CAMERA_COLORS[index % CAMERA_COLORS.length];
+          const calibration = calibrationData[camId];
+          const camNumber = calibration ? calibration.number : index + 1;
+          const isMaster = calibration && calibration.master;
+          const hasYolo = calibration && calibration.yolo_enabled;
+
+          let badges = "";
+          if (isMaster) badges += " (Master)";
+          if (hasYolo)
+            badges +=
+              ' <span style="color:#00ff88;font-weight:600;">YOLO</span>';
+
+          item.innerHTML = `
+            <div class="camera-color" style="background: #${color
+              .toString(16)
+              .padStart(6, "0")}"></div>
+            <div class="camera-info">
+              <div class="camera-id">${camId}</div>
+              <div class="camera-number">Camera #${camNumber}${badges}</div>
+            </div>
+          `;
+
+          item.addEventListener("click", () => focusOnCamera(camId));
+          cameraListEl.appendChild(item);
+        });
+      }
+
+      // Focus view on specific camera
+      function focusOnCamera(cameraId) {
+        const plane = cameraPlanes[cameraId];
+        if (!plane) return;
+
+        // Animate camera to look at plane
+        const targetPos = plane.position.clone();
+
+        // Calculate good viewing position
+        const direction = new THREE.Vector3(0, 0, 1);
+        direction.applyQuaternion(plane.quaternion);
+
+        const viewPos = targetPos.clone().add(direction.multiplyScalar(1.5));
+        viewPos.y += 0.5;
+
+        // Update controls target
+        controls.target.copy(targetPos);
+        camera.position.copy(viewPos);
+
+        // Update selected state in UI
+        document.querySelectorAll(".camera-item").forEach((item) => {
+          item.classList.toggle("selected", item.dataset.cameraId === cameraId);
+        });
+      }
+
+      // Start streaming frames
+      function startStreaming() {
+        if (streaming) return;
+        streaming = true;
+
+        Object.keys(cameraPlanes).forEach((cameraId) => {
+          const plane = cameraPlanes[cameraId];
+          const { canvas, ctx, texture } = plane.userData;
+
+          // Create image element for loading frames
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+
+          const updateFrame = () => {
+            if (!streaming) return;
+
+            // Add timestamp to avoid caching
+            img.src = `/api/frame/${cameraId}?t=${Date.now()}`;
+          };
+
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            texture.needsUpdate = true;
+            frameCount++;
+
+            if (streaming) {
+              // Request next frame
+              setTimeout(updateFrame, 66); // ~15 FPS
+            }
+          };
+
+          img.onerror = () => {
+            if (streaming) {
+              setTimeout(updateFrame, 500);
+            }
+          };
+
+          // Start loading frames
+          updateFrame();
+        });
+
+        startBtn.textContent = "Stop Streams";
+        statusDot.classList.add("active");
+        statusText.textContent = "Streaming";
+      }
+
+      // Stop streaming
+      function stopStreaming() {
+        streaming = false;
+        startBtn.textContent = "Start Streams";
+        statusDot.classList.remove("active");
+        statusText.textContent = "Paused";
+      }
+
+      // Reset view
+      function resetView() {
+        camera.position.set(1.5, 1.5, 2.5);
+        controls.target.set(0, 0, 0);
+        controls.update();
+
+        document.querySelectorAll(".camera-item").forEach((item) => {
+          item.classList.remove("selected");
+        });
+      }
+
+      // Tooltip functions
+      function showTooltip(x, y, cameraId) {
+        const calibration = calibrationData[cameraId];
+        tooltipTitle.textContent = `Camera ${cameraId}`;
+
+        let content = "";
+        if (calibration) {
+          content += `Camera #${calibration.number}`;
+          if (calibration.master) content += " (Master)";
+          if (calibration.intrinsics && calibration.intrinsics.K) {
+            const K = calibration.intrinsics.K;
+            content += `<br>Focal: ${K[0][0].toFixed(1)}px`;
+          }
+        }
+        tooltipContent.innerHTML = content;
+
+        tooltip.style.left = `${x + 15}px`;
+        tooltip.style.top = `${y + 15}px`;
+        tooltip.classList.add("visible");
+      }
+
+      function hideTooltip() {
+        tooltip.classList.remove("visible");
+      }
+
+      // Animation loop
+      function animate() {
+        requestAnimationFrame(animate);
+
+        controls.update();
+        renderer.render(scene, camera);
+
+        // Update FPS counter
+        const now = performance.now();
+        if (now - lastFpsTime >= 1000) {
+          frameRate.textContent = `${frameCount} fps`;
+          frameCount = 0;
+          lastFpsTime = now;
+        }
+      }
+
+      // Initialize everything
+      async function init() {
+        // Initialize Three.js
+        initScene();
+
+        // Load data
+        await loadCalibration();
+        availableCameras = await loadCameras();
+
+        console.log("Available cameras:", availableCameras);
+
+        // Create camera planes and frustums
+        availableCameras.forEach((cameraId, index) => {
+          // Create plane with video texture
+          const plane = createCameraPlane(cameraId, index);
+          cameraPlanes[cameraId] = plane;
+          scene.add(plane);
+
+          // Create frustum visualization
+          const frustum = createCameraFrustum(cameraId, index);
+          cameraFrustums[cameraId] = frustum;
+          scene.add(frustum);
+
+          // Position based on extrinsics
+          positionCamera(cameraId, plane, frustum, false);
+        });
+
+        // Update UI
+        cameraCountEl.textContent = availableCameras.length.toString();
+        createCameraListUI(availableCameras);
+
+        // Event listeners
+        startBtn.addEventListener("click", () => {
+          if (streaming) {
+            stopStreaming();
+          } else {
+            startStreaming();
+          }
+        });
+
+        resetBtn.addEventListener("click", resetView);
+
+        // Toggle event listener for camera positioning
+        lookAtOriginCb.addEventListener("change", reloadCameraPositions);
+        reloadCamsBtn.addEventListener("click", reloadCameraPositions);
+
+        // Hide loading overlay
+        loadingOverlay.classList.add("hidden");
+        statusText.textContent = "Ready";
+
+        // Start animation
+        animate();
+      }
+
+      // Start
+      init().catch(console.error);
+    </script>
+  </body>
+</html>
