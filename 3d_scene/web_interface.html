@@ -564,6 +564,11 @@
         directionalLight.position.set(5, 10, 5);
         scene.add(directionalLight);
 
+        // Grid helper at global coordinate origin (0,0,0)
+        const gridHelper = new THREE.GridHelper(3, 15, 0x888888, 0xcccccc);
+        gridHelper.position.set(0, 0, 0); // Positioned at world origin
+        scene.add(gridHelper);
+
         // Handle resize
         window.addEventListener("resize", onWindowResize);
 
@@ -611,8 +616,10 @@
       async function loadGLBScene() {
         const loader = new GLTFLoader();
         const glbPath =
-          "/videos/glbscene_50_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
-        const glbOriginCameraId = "141722079467";
+          //"videos/VGGT_demo/glbscene_97.3_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+          "videos/VGGT_demo/glbscene_48.1_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+        // "/videos/VGGT_demo/glbscene_50_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+        const glbOriginCameraId = "138422075916";
 
         return new Promise((resolve, reject) => {
           loader.load(
@@ -1009,8 +1016,19 @@
       }
 
       // Start streaming frames
-      function startStreaming() {
+      async function startStreaming() {
         if (streaming) return;
+
+        // Tell the server to start processing frames
+        try {
+          const response = await fetch("/api/stream/start", { method: "POST" });
+          const result = await response.json();
+          console.log("[Stream] Server started:", result);
+        } catch (error) {
+          console.error("[Stream] Failed to start server streaming:", error);
+          return;
+        }
+
         streaming = true;
 
         Object.keys(cameraPlanes).forEach((cameraId) => {
@@ -1055,8 +1073,18 @@
       }
 
       // Stop streaming
-      function stopStreaming() {
+      async function stopStreaming() {
         streaming = false;
+
+        // Tell the server to stop processing frames
+        try {
+          const response = await fetch("/api/stream/stop", { method: "POST" });
+          const result = await response.json();
+          console.log("[Stream] Server stopped:", result);
+        } catch (error) {
+          console.error("[Stream] Failed to stop server streaming:", error);
+        }
+
         startBtn.textContent = "Start Streams";
         statusDot.classList.remove("active");
         statusText.textContent = "Paused";
