@@ -299,13 +299,52 @@ def load_yolo_model():
 
 
 def load_calibration():
-    """Load camera calibration data from YAML file."""
+    """Load camera calibration data from YAML file and transform to checkerboard origin."""
     global calibration_data
     
     with open(CALIBRATION_FILE, 'r') as f:
-        calibration_data = yaml.safe_load(f)
+        raw_calibration = yaml.safe_load(f)
     
-    print(f"[Calibration] Loaded {len(calibration_data)} cameras")
+    # Find the master camera with checkerboard transform
+    checkerboard_to_master = None
+    for cam_id, cam_data in raw_calibration.items():
+        if cam_data.get('master', False) and 'checkerboard' in cam_data:
+            checkerboard_to_master = np.array(cam_data['checkerboard'], dtype=np.float64)
+            print(f"[Calibration] Found checkerboard transform in master camera {cam_id}")
+            break
+    
+    if checkerboard_to_master is None:
+        print("[Calibration] WARNING: No checkerboard transform found, using master camera as origin")
+        calibration_data = raw_calibration
+        return calibration_data
+    
+    # Compute inverse: master_to_checkerboard (this transforms points from master to checkerboard frame)
+    master_to_checkerboard = np.linalg.inv(checkerboard_to_master)
+    print(f"[Calibration] Transforming all cameras to checkerboard origin")
+    
+    # Transform all camera extrinsics to be relative to checkerboard
+    calibration_data = {}
+    for cam_id, cam_data in raw_calibration.items():
+        cam_extrinsics = np.array(cam_data['extrinsics'], dtype=np.float64)
+        
+        # New extrinsics: camera_to_checkerboard = master_to_checkerboard @ camera_to_master
+        # Since extrinsics are camera_to_master (or camera_to_world where world=master)
+        # We need: camera_to_checkerboard = master_to_checkerboard @ camera_to_master
+        new_extrinsics = master_to_checkerboard @ cam_extrinsics
+        
+        # Copy camera data with transformed extrinsics
+        calibration_data[cam_id] = {
+            'extrinsics': new_extrinsics.tolist(),
+            'intrinsics': cam_data['intrinsics'],
+            'number': cam_data.get('number', 0),
+            'master': cam_data.get('master', False)
+        }
+        
+        # Keep checkerboard info if present
+        if 'checkerboard' in cam_data:
+            calibration_data[cam_id]['checkerboard'] = cam_data['checkerboard']
+    
+    print(f"[Calibration] Loaded {len(calibration_data)} cameras (checkerboard origin)")
     return calibration_data
 
 

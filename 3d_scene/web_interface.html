@@ -566,7 +566,7 @@
 
         // Grid helper at global coordinate origin (0,0,0)
         const gridHelper = new THREE.GridHelper(3, 15, 0x888888, 0xcccccc);
-        gridHelper.position.set(0, 0, 0); // Positioned at world origin
+        gridHelper.position.set(-1, -1, -2); // Positioned at world origin
         scene.add(gridHelper);
 
         // Handle resize
@@ -612,14 +612,15 @@
         }
       }
 
-      // Load GLB scene - origin is at camera 141722079467
+      // Load GLB scene - origin is at camera 141722079467, 138422075916
       async function loadGLBScene() {
         const loader = new GLTFLoader();
         const glbPath =
-          //"videos/VGGT_demo/glbscene_97.3_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
-          "videos/VGGT_demo/glbscene_48.1_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+          "videos/VGGT_demo/calib_glbscene_48.1_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+        //"videos/VGGT_demo/glbscene_97.3_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
+        //"videos/VGGT_demo/glbscene_48.1_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
         // "/videos/VGGT_demo/glbscene_50_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
-        const glbOriginCameraId = "138422075916";
+        const glbOriginCameraId = "135122071615";
 
         return new Promise((resolve, reject) => {
           loader.load(
