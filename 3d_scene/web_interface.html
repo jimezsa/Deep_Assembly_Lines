@@ -329,35 +329,6 @@
         font-size: 0.9em;
       }
 
-      /* Tooltip */
-      .tooltip {
-        position: fixed;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 12px 16px;
-        z-index: 200;
-        pointer-events: none;
-        opacity: 0;
-        transition: opacity 0.2s ease;
-        max-width: 300px;
-      }
-
-      .tooltip.visible {
-        opacity: 1;
-      }
-
-      .tooltip-title {
-        font-weight: 500;
-        margin-bottom: 8px;
-        color: var(--accent-cyan);
-      }
-
-      .tooltip-content {
-        font-size: 0.85em;
-        color: var(--text-secondary);
-      }
-
       /* Instructions */
       .instructions {
         position: fixed;
@@ -454,12 +425,6 @@
       <div id="cameraList"></div>
     </div>
 
-    <!-- Tooltip -->
-    <div class="tooltip" id="tooltip">
-      <div class="tooltip-title" id="tooltipTitle"></div>
-      <div class="tooltip-content" id="tooltipContent"></div>
-    </div>
-
     <!-- Three.js and OrbitControls from CDN -->
     <script type="importmap">
       {
@@ -474,6 +439,8 @@
       import * as THREE from "three";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+      import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 
       // Color palette for cameras
       const CAMERA_COLORS = [
@@ -508,9 +475,6 @@
       const cameraListEl = document.getElementById("cameraList");
       const startBtn = document.getElementById("startBtn");
       const resetBtn = document.getElementById("resetBtn");
-      const tooltip = document.getElementById("tooltip");
-      const tooltipTitle = document.getElementById("tooltipTitle");
-      const tooltipContent = document.getElementById("tooltipContent");
       const reloadCamsBtn = document.getElementById("reloadCamsBtn");
 
       // Initialize Three.js scene
@@ -562,26 +526,6 @@
 
         // Handle resize
         window.addEventListener("resize", onWindowResize);
-
-        // Raycaster for mouse interaction
-        const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2();
-
-        renderer.domElement.addEventListener("mousemove", (event) => {
-          mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-          mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-          raycaster.setFromCamera(mouse, camera);
-          const planes = Object.values(cameraPlanes);
-          const intersects = raycaster.intersectObjects(planes);
-
-          if (intersects.length > 0) {
-            const camId = intersects[0].object.userData.cameraId;
-            showTooltip(event.clientX, event.clientY, camId);
-          } else {
-            hideTooltip();
-          }
-        });
       }
 
       function onWindowResize() {
@@ -671,6 +615,9 @@
                 model.position.copy(position);
                 model.quaternion.copy(quaternion);
 
+                // Scale if needed (uncomment if GLB is in mm instead of meters)
+                model.scale.set(1.4, 1.4, 1.4);
+
                 console.log(
                   `GLB model positioned at camera ${glbOriginCameraId}:`,
                   position.toArray().map((v) => v.toFixed(3))
@@ -690,6 +637,93 @@
             },
             (error) => {
               console.error("Error loading GLB:", error);
+              reject(error);
+            }
+          );
+        });
+      }
+
+      // Load OBJ model with MTL material
+      async function loadOBJModel() {
+        const basePath = "videos/scanned_objects/e-screw-driver/";
+        const objFileName = "eScrewDriver.obj";
+        const mtlFileName = "eScrewDriver.mtl";
+
+        console.log("Starting OBJ model load...");
+        console.log("Base path:", basePath);
+        console.log("OBJ file:", objFileName);
+        console.log("MTL file:", mtlFileName);
+
+        return new Promise((resolve, reject) => {
+          const mtlLoader = new MTLLoader();
+          mtlLoader.setPath(basePath);
+
+          mtlLoader.load(
+            mtlFileName,
+            (materials) => {
+              materials.preload();
+              console.log("MTL materials loaded");
+
+              const objLoader = new OBJLoader();
+              objLoader.setMaterials(materials);
+
+              objLoader.load(
+                basePath + objFileName,
+                (object) => {
+                  console.log("OBJ model loaded successfully");
+
+                  // NOTE: Bounding box calculation and logging have been removed as per instruction.
+
+                  // Model is in mm, scene is in meters, so scale by 0.001
+                  object.scale.set(1, 1, 1); // Convert mm to meters
+
+                  // Position at scene origin at ground level
+                  object.position.set(0, 0, 0);
+
+                  // Enable shadows if needed
+                  object.traverse((child) => {
+                    if (child instanceof THREE.Mesh) {
+                      child.castShadow = true;
+                      child.receiveShadow = true;
+                      console.log("Mesh found:", child.name || "unnamed");
+                    }
+                  });
+
+                  scene.add(object);
+                  console.log(
+                    "OBJ model added to scene at position:",
+                    object.position.toArray()
+                  );
+                  resolve(object);
+                },
+                (progress) => {
+                  const percent = (progress.loaded / progress.total) * 100;
+                  console.log(`Loading OBJ: ${percent.toFixed(1)}%`);
+                },
+                (error) => {
+                  console.error(
+                    "Error loading OBJ file:",
+                    basePath + objFileName
+                  );
+                  console.error("OBJ Error details:", error);
+                  console.error(
+                    "Make sure the file exists at:",
+                    window.location.origin + "/" + basePath + objFileName
+                  );
+                  reject(error);
+                }
+              );
+            },
+            (progress) => {
+              console.log("Loading MTL...", progress);
+            },
+            (error) => {
+              console.error("Error loading MTL file:", basePath + mtlFileName);
+              console.error("MTL Error details:", error);
+              console.error(
+                "Make sure the file exists at:",
+                window.location.origin + "/" + basePath + mtlFileName
+              );
               reject(error);
             }
           );
@@ -1083,31 +1117,6 @@
         });
       }
 
-      // Tooltip functions
-      function showTooltip(x, y, cameraId) {
-        const calibration = calibrationData[cameraId];
-        tooltipTitle.textContent = `Camera ${cameraId}`;
-
-        let content = "";
-        if (calibration) {
-          content += `Camera #${calibration.number}`;
-          if (calibration.master) content += " (Master)";
-          if (calibration.intrinsics && calibration.intrinsics.K) {
-            const K = calibration.intrinsics.K;
-            content += `<br>Focal: ${K[0][0].toFixed(1)}px`;
-          }
-        }
-        tooltipContent.innerHTML = content;
-
-        tooltip.style.left = `${x + 15}px`;
-        tooltip.style.top = `${y + 15}px`;
-        tooltip.classList.add("visible");
-      }
-
-      function hideTooltip() {
-        tooltip.classList.remove("visible");
-      }
-
       // Animation loop
       function animate() {
         requestAnimationFrame(animate);
@@ -1140,6 +1149,13 @@
           await loadGLBScene();
         } catch (error) {
           console.error("Failed to load GLB scene, continuing anyway:", error);
+        }
+
+        // Load OBJ model (e-screw-driver)
+        try {
+          await loadOBJModel();
+        } catch (error) {
+          console.error("Failed to load OBJ model, continuing anyway:", error);
         }
 
         // Create camera planes and frustums

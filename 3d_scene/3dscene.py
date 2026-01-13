@@ -73,7 +73,7 @@ class SyncedVideoManager:
         self.yolo_model = None
         self.yolo_camera_id = None
         self.yolo_device = "cpu"
-        self.inference_interval = 2
+        self.inference_interval = 4
         self.inference_counter = 0
         self.cached_yolo_results = None
         self.yolo_overlay = None
