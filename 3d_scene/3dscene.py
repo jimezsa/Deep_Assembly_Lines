@@ -8,8 +8,9 @@ import numpy as np
 import time
 import threading
 
-# Import DOPE inference module
-from dope_inference import DOPEDetector, load_dope_detector, create_empty_pose
+# Import inference modules
+from dope_inference import load_dope_detector, create_empty_pose
+from yolo_inference import load_yolo_model, YOLODetector
 
 # =============================================================================
 # Configuration
@@ -28,26 +29,13 @@ DOPE_WEIGHTS_PATH = "weights/dope_tool.pth"
 DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
 DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
 
-# Define CLASSES for YOLO
-CLASSES = ["person", "case", "case_top", "battery", "screw", "tool"]
-
-# Pre-define colors as numpy array for faster access (BGR format)
-CLASS_COLORS = np.array([
-    [50, 0, 0],       # person: blueish
-    [0, 165, 255],    # case: orange
-    [0, 40, 75],      # case_top: yellow
-    [192, 192, 192],  # battery: silver
-    [140, 0, 140],    # screw: violet
-    [0, 200, 0]       # tool: green
-], dtype=np.uint8)
-
 # =============================================================================
 # Global State
 # =============================================================================
 
 calibration_data = {}
-yolo_model = None
-yolo_device = "cpu"  # Will be set to 'mps', 'cuda', or 'cpu'
+yolo_detector = None  # YOLODetector instance
+yolo_device = "cpu"
 sync_manager = None
 streaming_active = False  # Controls whether frame processing is active
 
@@ -55,31 +43,6 @@ streaming_active = False  # Controls whether frame processing is active
 dope_detector = None
 current_tool_pose = create_empty_pose()
 pose_lock = threading.Lock()
-
-
-# =============================================================================
-# Utility Functions
-# =============================================================================
-
-def get_best_device():
-    """Detect the best available device for inference (MPS > CUDA > CPU)."""
-    try:
-        import torch
-        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            print("[Device] MPS (Apple Silicon GPU) available")
-            return "mps"
-        elif torch.cuda.is_available():
-            print(f"[Device] CUDA available: {torch.cuda.get_device_name(0)}")
-            return "cuda"
-        else:
-            print("[Device] Using CPU")
-            return "cpu"
-    except ImportError:
-        print("[Device] PyTorch not available, using CPU")
-        return "cpu"
-    except Exception as e:
-        print(f"[Device] Error detecting device: {e}, using CPU")
-        return "cpu"
 
 
 # =============================================================================
@@ -99,13 +62,11 @@ class SyncedVideoManager:
         self.lock = threading.Lock()
         
         # YOLO state
-        self.yolo_model = None
+        self.yolo_detector = None  # YOLODetector instance
         self.yolo_camera_id = None
-        self.yolo_device = "cpu"
-        self.inference_interval = 4
-        self.inference_counter = 0
+        self.yolo_inference_interval = 4
+        self.yolo_inference_counter = 0
         self.cached_yolo_results = None
-        self.yolo_overlay = None
         
         # DOPE 6D pose detection state
         self.dope_detector = None
@@ -148,13 +109,16 @@ class SyncedVideoManager:
         
         print(f"[Camera {camera_id}] Loaded: {video_path} ({total_frames} frames @ {fps}fps)")
     
-    def set_yolo_model(self, model, camera_id, device="cpu"):
-        """Set YOLO model for a specific camera."""
-        self.yolo_model = model
+    def set_yolo_detector(self, detector, camera_id):
+        """Set YOLO detector for a specific camera.
+        
+        Args:
+            detector: YOLODetector instance
+            camera_id: Camera ID to run YOLO on
+        """
+        self.yolo_detector = detector
         self.yolo_camera_id = camera_id
-        self.yolo_device = device
-        self.yolo_overlay = np.zeros((self.target_height, self.target_width, 3), dtype=np.uint8)
-        print(f"[YOLO] Enabled on camera {camera_id} (device: {device})")
+        print(f"[YOLO] Enabled on camera {camera_id} (device: {detector.device})")
     
     def set_dope_detector(self, detector, camera_id):
         """Set DOPE detector for 6D pose estimation on a specific camera."""
@@ -162,62 +126,12 @@ class SyncedVideoManager:
         self.dope_camera_id = camera_id
         print(f"[DOPE] Enabled on camera {camera_id}")
     
-    def _draw_yolo_predictions(self, frame, results):
-        """Draw YOLO predictions on frame."""
-        if results is None:
-            return frame
-            
-        has_masks = any(r.masks is not None and len(r.masks.xy) > 0 for r in results)
-        if not has_masks:
-            return frame
-        
-        np.copyto(self.yolo_overlay, frame)
-        
-        for r in results:
-            if r.masks is None:
-                continue
-            
-            masks_xy = r.masks.xy
-            boxes_cls = r.boxes.cls.cpu().numpy().astype(np.int32)
-            boxes_conf = r.boxes.conf.cpu().numpy()
-            
-            for j, poly_np in enumerate(masks_xy):
-                if len(poly_np) < 3:
-                    continue
-                
-                class_id = boxes_cls[j]
-                conf = boxes_conf[j]
-                
-                # Scale polygon to target resolution
-                h_scale = self.target_height / r.orig_shape[0]
-                w_scale = self.target_width / r.orig_shape[1]
-                scaled_poly = poly_np.copy()
-                scaled_poly[:, 0] *= w_scale
-                scaled_poly[:, 1] *= h_scale
-                
-                color = tuple(int(c) for c in CLASS_COLORS[class_id % len(CLASS_COLORS)])
-                pts = scaled_poly.astype(np.int32).reshape((-1, 1, 2))
-                
-                cv2.fillPoly(self.yolo_overlay, [pts], color)
-                cv2.polylines(frame, [pts], True, color, 1)
-                
-                label = f"{CLASSES[class_id] if class_id < len(CLASSES) else '?'} {conf:.2f}"
-                tx, ty = int(scaled_poly[0][0]), int(scaled_poly[0][1]) - 3
-                if ty < 10:
-                    ty = int(scaled_poly[0][1]) + 10
-                
-                cv2.putText(frame, label, (tx, ty), self.font, 0.2, 
-                           (255, 255, 255), 1, cv2.LINE_AA)
-        
-        cv2.addWeighted(self.yolo_overlay, 0.4, frame, 0.6, 0, frame)
-        return frame
-    
     def reset_playback(self):
         """Reset playback to the beginning."""
         global current_tool_pose
         with self.lock:
             self.current_frame = 0
-            self.inference_counter = 0
+            self.yolo_inference_counter = 0
             self.cached_yolo_results = None
             self.dope_inference_counter = 0
             self.cached_dope_result = None
@@ -241,7 +155,7 @@ class SyncedVideoManager:
             self.current_frame += 1
             if self.current_frame >= self.total_frames:
                 self.current_frame = 0
-                self.inference_counter = 0
+                self.yolo_inference_counter = 0
                 self.cached_yolo_results = None
             
             # Track FPS
@@ -266,23 +180,10 @@ class SyncedVideoManager:
                     continue
                 
                 # Run YOLO on the designated camera
-                if camera_id == self.yolo_camera_id and self.yolo_model is not None:
+                if camera_id == self.yolo_camera_id and self.yolo_detector is not None:
                     # Run inference periodically
-                    if self.inference_counter % self.inference_interval == 0:
-                        try:
-                            results = self.yolo_model(
-                                frame,
-                                verbose=False,
-                                conf=0.35,
-                                iou=0.45,
-                                max_det=20,
-                                imgsz=640,
-                                device=self.yolo_device
-                            )
-                            self.cached_yolo_results = results
-                        except Exception as e:
-                            print(f"[YOLO] Error: {e}")
-                            self.cached_yolo_results = None
+                    if self.yolo_inference_counter % self.yolo_inference_interval == 0:
+                        self.cached_yolo_results = self.yolo_detector.detect(frame)
                 
                 # Run DOPE 6D pose detection on designated camera
                 if camera_id == self.dope_camera_id and self.dope_detector is not None:
@@ -315,8 +216,12 @@ class SyncedVideoManager:
                                   interpolation=cv2.INTER_LINEAR)
                 
                 # Apply YOLO overlay for the designated camera
-                if camera_id == self.yolo_camera_id and self.yolo_model is not None:
-                    frame = self._draw_yolo_predictions(frame, self.cached_yolo_results)
+                if camera_id == self.yolo_camera_id and self.yolo_detector is not None:
+                    frame = self.yolo_detector.draw_predictions(
+                        frame, self.cached_yolo_results,
+                        target_width=self.target_width, 
+                        target_height=self.target_height
+                    )
                     # Draw FPS
                     cv2.putText(frame, f"FPS: {self.current_fps:.1f}", (5, 15),
                                 self.font, 0.45, (0, 255, 0), 1)
@@ -334,7 +239,7 @@ class SyncedVideoManager:
                 _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 cam_data['cached_jpeg'] = jpeg.tobytes()
             
-            self.inference_counter += 1
+            self.yolo_inference_counter += 1
             self.dope_inference_counter += 1
     
     def get_frame(self, camera_id):
@@ -382,38 +287,12 @@ async def frame_update_loop():
 # Model Loading
 # =============================================================================
 
-def load_yolo_model():
-    """Load YOLO model with best available device (MPS/CUDA/CPU)."""
-    global yolo_model, yolo_device
+def init_yolo():
+    """Initialize YOLO detector."""
+    global yolo_detector, yolo_device
     
-    try:
-        from ultralytics import YOLO
-        
-        # Detect best device
-        yolo_device = get_best_device()
-        
-        pt_path = os.path.join('yolov11_finetuned', 'runs', 'segment', 
-                               'yolov11n_seg_custom', 'weights', 'best.pt')
-        
-        if os.path.exists(pt_path):
-            print(f"[YOLO] Loading model: {pt_path}")
-            yolo_model = YOLO(pt_path)
-            
-            print(f"[YOLO] Warming up on {yolo_device}...")
-            _ = yolo_model(np.zeros((320, 320, 3), dtype=np.uint8), 
-                          verbose=False, device=yolo_device)
-            print(f"[YOLO] Model ready on {yolo_device}")
-            return yolo_model
-        else:
-            print(f"[YOLO] Model not found: {pt_path}")
-            return None
-            
-    except ImportError:
-        print("[YOLO] ultralytics not installed, YOLO disabled")
-        return None
-    except Exception as e:
-        print(f"[YOLO] Failed to load model: {e}")
-        return None
+    yolo_detector, yolo_device = load_yolo_model()
+    return yolo_detector
 
 
 def load_dope_model():
@@ -481,27 +360,27 @@ def load_calibration():
 
 def init_sync_manager():
     """Initialize synchronized video manager."""
-    global sync_manager, yolo_model, dope_detector
-    
+    global sync_manager, yolo_detector, dope_detector
+
     sync_manager = SyncedVideoManager()
-    
+
     # Get all camera directories
-    camera_dirs = [d for d in os.listdir(RECORDING_DIR) 
+    camera_dirs = [d for d in os.listdir(RECORDING_DIR)
                    if os.path.isdir(os.path.join(RECORDING_DIR, d)) and d.isdigit()]
-    
+
     for cam_id in sorted(camera_dirs):
         cam_dir = os.path.join(RECORDING_DIR, cam_id)
         video_file = os.path.join(cam_dir, f"{cam_id}.mp4")
-        
+
         if os.path.exists(video_file):
             try:
                 sync_manager.add_camera(cam_id, video_file)
             except Exception as e:
                 print(f"[Camera {cam_id}] Failed to load: {e}")
-    
-    # Set YOLO model on designated camera
-    if yolo_model is not None:
-        sync_manager.set_yolo_model(yolo_model, YOLO_CAMERA_ID, yolo_device)
+
+    # Set YOLO detector on designated camera
+    if yolo_detector is not None:
+        sync_manager.set_yolo_detector(yolo_detector, YOLO_CAMERA_ID)
     
     # Set DOPE detector on designated camera
     if dope_detector is not None:
@@ -679,7 +558,7 @@ async def run_server(host="0.0.0.0", port=8080):
     site = web.TCPSite(runner, host, port)
     await site.start()
     
-    yolo_status = f"enabled on {yolo_device}" if yolo_model else "disabled"
+    yolo_status = f"enabled on {yolo_device}" if yolo_detector else "disabled"
     dope_status = "enabled" if dope_detector else "disabled"
     print(f"\n{'='*60}")
     print(f"  3D Scene Multi-Camera Server (Synchronized)")
@@ -713,19 +592,19 @@ def main():
     print(f"\n{'='*60}")
     print(f"  Initializing 3D Scene Multi-Camera Server")
     print(f"{'='*60}\n")
-    
-    # Load YOLO model first
-    load_yolo_model()
-    
+
+    # Load YOLO detector
+    init_yolo()
+
     # Load DOPE model for 6D pose estimation
     load_dope_model()
-    
+
     # Load calibration data
     load_calibration()
-    
+
     # Initialize synchronized video manager
     init_sync_manager()
-    
+
     # Run server
     asyncio.run(run_server())
 
