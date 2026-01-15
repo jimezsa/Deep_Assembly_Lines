@@ -64,14 +64,14 @@ class SyncedVideoManager:
         # YOLO state
         self.yolo_detector = None  # YOLODetector instance
         self.yolo_camera_id = None
-        self.yolo_inference_interval = 4
+        self.yolo_inference_interval = 3  # Run YOLO every 3 frames (like WebRTC)
         self.yolo_inference_counter = 0
         self.cached_yolo_results = None
         
         # DOPE 6D pose detection state
         self.dope_detector = None
         self.dope_camera_id = None
-        self.dope_inference_interval = 6  # Run DOPE every 6 frames
+        self.dope_inference_interval = 5  # Run DOPE every 5 frames
         self.dope_inference_counter = 0
         self.cached_dope_result = None
         
@@ -118,6 +118,8 @@ class SyncedVideoManager:
         """
         self.yolo_detector = detector
         self.yolo_camera_id = camera_id
+        # Warmup the model
+        detector.warmup(imgsz=self.target_width)
         print(f"[YOLO] Enabled on camera {camera_id} (device: {detector.device})")
     
     def set_dope_detector(self, detector, camera_id):
@@ -142,7 +144,7 @@ class SyncedVideoManager:
             with pose_lock:
                 current_tool_pose = create_empty_pose()
             
-            # Seek all cameras to frame 0
+            # Seek all cameras to frame 0 (only time we seek)
             for cam_data in self.cameras.values():
                 cam_data['cap'].set(cv2.CAP_PROP_POS_FRAMES, 0)
                 cam_data['cached_jpeg'] = None
@@ -150,20 +152,16 @@ class SyncedVideoManager:
             print("[SyncManager] Playback reset to frame 0")
     
     def advance_frame(self):
-        """Advance to the next frame and update all cameras."""
+        """Advance to the next frame and update all cameras (optimized sequential read)."""
         with self.lock:
             self.current_frame += 1
-            if self.current_frame >= self.total_frames:
-                self.current_frame = 0
-                self.yolo_inference_counter = 0
-                self.cached_yolo_results = None
             
             # Track FPS
             self.fps_frame_count += 1
             elapsed = time.perf_counter() - self.fps_start_time
             if elapsed > 0:
                 self.current_fps = self.fps_frame_count / elapsed
-            if self.fps_frame_count >= 50:
+            if self.fps_frame_count >= 100:  # Reset less frequently
                 self.fps_frame_count = 0
                 self.fps_start_time = time.perf_counter()
             
@@ -171,17 +169,26 @@ class SyncedVideoManager:
             for camera_id, cam_data in self.cameras.items():
                 cap = cam_data['cap']
                 
-                # Seek to current frame
-                cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
+                # Read next frame SEQUENTIALLY (much faster than seeking)
                 ret, frame = cap.read()
                 
+                # Loop video if we reach the end
                 if not ret:
-                    cam_data['cached_jpeg'] = None
-                    continue
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    self.current_frame = 0
+                    self.yolo_inference_counter = 0
+                    self.cached_yolo_results = None
+                    self.dope_inference_counter = 0
+                    self.cached_dope_result = None
+                    self.fps_start_time = time.perf_counter()
+                    self.fps_frame_count = 0
+                    ret, frame = cap.read()
+                    if not ret:
+                        cam_data['cached_jpeg'] = None
+                        continue
                 
                 # Run YOLO on the designated camera
                 if camera_id == self.yolo_camera_id and self.yolo_detector is not None:
-                    # Run inference periodically
                     if self.yolo_inference_counter % self.yolo_inference_interval == 0:
                         self.cached_yolo_results = self.yolo_detector.detect(frame)
                 
@@ -190,9 +197,6 @@ class SyncedVideoManager:
                     if self.dope_inference_counter % self.dope_inference_interval == 0:
                         try:
                             result = self.dope_detector.detect(frame)
-                            
-                            # Update global pose state - only update if detection found
-                            # Keep last known pose when no detection (don't hide the object)
                             global current_tool_pose
                             with pose_lock:
                                 if result is not None and result["detected"]:
@@ -200,14 +204,11 @@ class SyncedVideoManager:
                                     current_tool_pose["fresh"] = True
                                     self.cached_dope_result = result
                                 else:
-                                    # Mark as stale but keep the last pose
                                     current_tool_pose["fresh"] = False
-                                    # Keep cached_dope_result for drawing
                         except Exception as e:
                             print(f"[DOPE] Error: {e}")
-                            # Don't clear cached result - keep last known pose
                     
-                    # Draw DOPE detection on the frame (at original resolution)
+                    # Draw DOPE detection on the frame
                     if self.cached_dope_result is not None:
                         frame = self.dope_detector.draw_detection(frame, self.cached_dope_result)
                 
@@ -222,21 +223,17 @@ class SyncedVideoManager:
                         target_width=self.target_width, 
                         target_height=self.target_height
                     )
-                    # Draw FPS
                     cv2.putText(frame, f"FPS: {self.current_fps:.1f}", (5, 15),
                                 self.font, 0.45, (0, 255, 0), 1)
                 
                 # Draw DOPE status for DOPE camera
                 if camera_id == self.dope_camera_id and self.dope_detector is not None:
-                    if self.cached_dope_result and self.cached_dope_result.get("detected"):
-                        cv2.putText(frame, "DOPE: DETECTED", (5, 15),
-                                    self.font, 0.4, (0, 255, 0), 1)
-                    else:
-                        cv2.putText(frame, "DOPE: Searching...", (5, 15),
-                                    self.font, 0.4, (0, 165, 255), 1)
+                    status = "DETECTED" if self.cached_dope_result and self.cached_dope_result.get("detected") else "Searching..."
+                    color = (0, 255, 0) if "DETECTED" in status else (0, 165, 255)
+                    cv2.putText(frame, f"DOPE: {status}", (5, 15), self.font, 0.4, color, 1)
                 
                 # Encode as JPEG
-                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 cam_data['cached_jpeg'] = jpeg.tobytes()
             
             self.yolo_inference_counter += 1
@@ -264,7 +261,7 @@ async def frame_update_loop():
     """Background task that advances frames at a fixed rate when streaming is active."""
     global sync_manager, streaming_active
     
-    frame_interval = 1.0 / 15  # 15 FPS
+    frame_interval = 1.0 / 30  # Target 30 FPS (optimized sequential reading)
     loop = asyncio.get_running_loop()
     
     while True:
