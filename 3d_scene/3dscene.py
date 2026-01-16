@@ -24,7 +24,7 @@ CALIBRATION_FILE = "data/cams_calibrations.yml"
 YOLO_CAMERA_ID = "137322071489"
 
 # Camera to run DOPE on (for 6D pose estimation)
-DOPE_CAMERA_ID = "135122071615"
+DOPE_CAMERA_ID = "142122070087"
 DOPE_WEIGHTS_PATH = "weights/dope_tool.pth"
 DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
 DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
