@@ -23,11 +23,25 @@ CALIBRATION_FILE = "data/cams_calibrations.yml"
 # Camera to run YOLO on
 YOLO_CAMERA_ID = "137322071489"
 
-# Camera to run DOPE on (for 6D pose estimation)
-DOPE_CAMERA_ID = "142122070087"
-DOPE_WEIGHTS_PATH = "weights/dope_tool.pth"
+# DOPE configuration
 DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
 DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
+
+# Multiple object configurations for DOPE detection (each with its own camera)
+DOPE_OBJECTS = {
+    "tool": {
+        "weights_path": "weights/dope_tool.pth",
+        "class_name": "tool",
+        "obj_path": "data/scanned_objects/e-screw-driver/eScrewDriver.obj",
+        "camera_id": "142122070087"
+    },
+    "case": {
+        "weights_path": "weights/dope_case.pth",
+        "class_name": "case",
+        "obj_path": "data/scanned_objects/case/case.obj",
+        "camera_id": "135122071615"
+    }
+}
 
 # =============================================================================
 # Global State
@@ -39,9 +53,9 @@ yolo_device = "cpu"
 sync_manager = None
 streaming_active = False  # Controls whether frame processing is active
 
-# DOPE 6D pose estimation state
-dope_detector = None
-current_tool_pose = create_empty_pose()
+# DOPE 6D pose estimation state (multi-object support)
+dope_detectors = {}  # object_name -> DOPEDetector instance
+current_object_poses = {}  # object_name -> pose dict
 pose_lock = threading.Lock()
 
 
@@ -68,12 +82,12 @@ class SyncedVideoManager:
         self.yolo_inference_counter = 0
         self.cached_yolo_results = None
         
-        # DOPE 6D pose detection state
-        self.dope_detector = None
-        self.dope_camera_id = None
+        # DOPE 6D pose detection state (multi-object, per-camera support)
+        self.dope_detectors = {}  # object_name -> {"detector": DOPEDetector, "camera_id": str}
+        self.dope_camera_ids = set()  # All cameras used for DOPE
         self.dope_inference_interval = 5  # Run DOPE every 5 frames
         self.dope_inference_counter = 0
-        self.cached_dope_result = None
+        self.cached_dope_results = {}  # object_name -> detection result
         
         # FPS tracking
         self.fps_start_time = time.perf_counter()
@@ -122,27 +136,36 @@ class SyncedVideoManager:
         detector.warmup(imgsz=self.target_width)
         print(f"[YOLO] Enabled on camera {camera_id} (device: {detector.device})")
     
-    def set_dope_detector(self, detector, camera_id):
-        """Set DOPE detector for 6D pose estimation on a specific camera."""
-        self.dope_detector = detector
-        self.dope_camera_id = camera_id
-        print(f"[DOPE] Enabled on camera {camera_id}")
+    def set_dope_detector(self, detector, camera_id, object_name="tool"):
+        """Set DOPE detector for 6D pose estimation on a specific camera.
+        
+        Args:
+            detector: DOPEDetector instance
+            camera_id: Camera ID to run DOPE on
+            object_name: Name of the object being detected
+        """
+        self.dope_detectors[object_name] = {
+            "detector": detector,
+            "camera_id": camera_id
+        }
+        self.dope_camera_ids.add(camera_id)
+        print(f"[DOPE] Enabled '{object_name}' detector on camera {camera_id}")
     
     def reset_playback(self):
         """Reset playback to the beginning."""
-        global current_tool_pose
+        global current_object_poses
         with self.lock:
             self.current_frame = 0
             self.yolo_inference_counter = 0
             self.cached_yolo_results = None
             self.dope_inference_counter = 0
-            self.cached_dope_result = None
+            self.cached_dope_results = {}
             self.fps_start_time = time.perf_counter()
             self.fps_frame_count = 0
             
-            # Reset tool pose
+            # Reset all object poses
             with pose_lock:
-                current_tool_pose = create_empty_pose()
+                current_object_poses = {name: create_empty_pose() for name in self.dope_detectors}
             
             # Seek all cameras to frame 0 (only time we seek)
             for cam_data in self.cameras.values():
@@ -192,25 +215,37 @@ class SyncedVideoManager:
                     if self.yolo_inference_counter % self.yolo_inference_interval == 0:
                         self.cached_yolo_results = self.yolo_detector.detect(frame)
                 
-                # Run DOPE 6D pose detection on designated camera
-                if camera_id == self.dope_camera_id and self.dope_detector is not None:
+                # Run DOPE 6D pose detection (per-object camera assignment)
+                if camera_id in self.dope_camera_ids and self.dope_detectors:
                     if self.dope_inference_counter % self.dope_inference_interval == 0:
-                        try:
-                            result = self.dope_detector.detect(frame)
-                            global current_tool_pose
-                            with pose_lock:
-                                if result is not None and result["detected"]:
-                                    current_tool_pose = result
-                                    current_tool_pose["fresh"] = True
-                                    self.cached_dope_result = result
-                                else:
-                                    current_tool_pose["fresh"] = False
-                        except Exception as e:
-                            print(f"[DOPE] Error: {e}")
+                        global current_object_poses
+                        # Run detectors assigned to this camera
+                        for obj_name, dope_info in self.dope_detectors.items():
+                            if dope_info["camera_id"] != camera_id:
+                                continue
+                            detector = dope_info["detector"]
+                            try:
+                                result = detector.detect(frame)
+                                with pose_lock:
+                                    if result is not None and result["detected"]:
+                                        result["object_name"] = obj_name
+                                        result["camera_id"] = camera_id
+                                        current_object_poses[obj_name] = result
+                                        current_object_poses[obj_name]["fresh"] = True
+                                        self.cached_dope_results[obj_name] = result
+                                    else:
+                                        if obj_name in current_object_poses:
+                                            current_object_poses[obj_name]["fresh"] = False
+                            except Exception as e:
+                                print(f"[DOPE] Error detecting {obj_name}: {e}")
                     
-                    # Draw DOPE detection on the frame
-                    if self.cached_dope_result is not None:
-                        frame = self.dope_detector.draw_detection(frame, self.cached_dope_result)
+                    # Draw DOPE detections for objects assigned to this camera
+                    for obj_name, dope_info in self.dope_detectors.items():
+                        if dope_info["camera_id"] != camera_id:
+                            continue
+                        if obj_name in self.cached_dope_results:
+                            detector = dope_info["detector"]
+                            frame = detector.draw_detection(frame, self.cached_dope_results[obj_name])
                 
                 # Resize for display
                 frame = cv2.resize(frame, (self.target_width, self.target_height), 
@@ -226,10 +261,13 @@ class SyncedVideoManager:
                     cv2.putText(frame, f"FPS: {self.current_fps:.1f}", (5, 15),
                                 self.font, 0.45, (0, 255, 0), 1)
                 
-                # Draw DOPE status for DOPE camera
-                if camera_id == self.dope_camera_id and self.dope_detector is not None:
-                    status = "DETECTED" if self.cached_dope_result and self.cached_dope_result.get("detected") else "Searching..."
-                    color = (0, 255, 0) if "DETECTED" in status else (0, 165, 255)
+                # Draw DOPE status for cameras running DOPE
+                if camera_id in self.dope_camera_ids and self.dope_detectors:
+                    # Count objects detected on this camera
+                    camera_objects = [name for name, info in self.dope_detectors.items() if info["camera_id"] == camera_id]
+                    detected_on_cam = sum(1 for name in camera_objects if name in self.cached_dope_results and self.cached_dope_results[name].get("detected"))
+                    status = f"{detected_on_cam}/{len(camera_objects)} detected"
+                    color = (0, 255, 0) if detected_on_cam > 0 else (0, 165, 255)
                     cv2.putText(frame, f"DOPE: {status}", (5, 15), self.font, 0.4, color, 1)
                 
                 # Encode as JPEG
@@ -292,17 +330,32 @@ def init_yolo():
     return yolo_detector
 
 
-def load_dope_model():
-    """Load DOPE model for 6D pose estimation."""
-    global dope_detector
+def load_dope_models():
+    """Load DOPE models for 6D pose estimation (multi-object support)."""
+    global dope_detectors, current_object_poses
     
-    dope_detector = load_dope_detector(
-        weights_path=DOPE_WEIGHTS_PATH,
-        config_path=DOPE_CONFIG_PATH,
-        camera_info_path=DOPE_CAMERA_INFO_PATH,
-        class_name="tool"
-    )
-    return dope_detector
+    dope_detectors = {}
+    current_object_poses = {}
+    
+    for obj_name, obj_config in DOPE_OBJECTS.items():
+        weights_path = obj_config["weights_path"]
+        class_name = obj_config["class_name"]
+        
+        detector = load_dope_detector(
+            weights_path=weights_path,
+            config_path=DOPE_CONFIG_PATH,
+            camera_info_path=DOPE_CAMERA_INFO_PATH,
+            class_name=class_name
+        )
+        
+        if detector is not None:
+            dope_detectors[obj_name] = detector
+            current_object_poses[obj_name] = create_empty_pose()
+            print(f"[DOPE] Loaded detector for '{obj_name}'")
+        else:
+            print(f"[DOPE] Warning: Could not load detector for '{obj_name}' (weights: {weights_path})")
+    
+    return dope_detectors
 
 
 def load_calibration():
@@ -357,7 +410,7 @@ def load_calibration():
 
 def init_sync_manager():
     """Initialize synchronized video manager."""
-    global sync_manager, yolo_detector, dope_detector
+    global sync_manager, yolo_detector, dope_detectors
 
     sync_manager = SyncedVideoManager()
 
@@ -379,9 +432,10 @@ def init_sync_manager():
     if yolo_detector is not None:
         sync_manager.set_yolo_detector(yolo_detector, YOLO_CAMERA_ID)
     
-    # Set DOPE detector on designated camera
-    if dope_detector is not None:
-        sync_manager.set_dope_detector(dope_detector, DOPE_CAMERA_ID)
+    # Set DOPE detectors with per-object camera assignments
+    for obj_name, detector in dope_detectors.items():
+        camera_id = DOPE_OBJECTS[obj_name].get("camera_id", "142122070087")
+        sync_manager.set_dope_detector(detector, camera_id, obj_name)
     
     print(f"[SyncManager] Initialized with {len(sync_manager.cameras)} cameras, synced to {sync_manager.total_frames} frames")
 
@@ -486,14 +540,15 @@ async def get_streaming_status(request):
 
 
 async def get_tool_pose(request):
-    """Get current 6D pose of the detected tool object.
+    """Get current 6D pose of the detected tool object (legacy endpoint).
     
     Returns position (x, y, z) in meters and quaternion (x, y, z, w).
     The pose is in camera coordinate system.
     """
-    global current_tool_pose
+    global current_object_poses
     with pose_lock:
-        pose_data = current_tool_pose.copy()
+        # Return tool pose for backward compatibility
+        pose_data = current_object_poses.get("tool", create_empty_pose()).copy()
     
     # Convert numpy arrays to lists for JSON serialization
     def to_serializable(obj):
@@ -515,6 +570,57 @@ async def get_tool_pose(request):
             'Pragma': 'no-cache',
             'Expires': '0'
         }
+    )
+
+
+async def get_object_poses(request):
+    """Get current 6D poses of all detected objects.
+    
+    Returns a dictionary of object_name -> pose data.
+    Each pose contains position (x, y, z) in meters and quaternion (x, y, z, w).
+    The poses are in camera coordinate system.
+    """
+    global current_object_poses
+    with pose_lock:
+        poses_data = {name: pose.copy() for name, pose in current_object_poses.items()}
+    
+    # Convert numpy arrays to lists for JSON serialization
+    def to_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (list, tuple)):
+            return [to_serializable(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: to_serializable(v) for k, v in obj.items()}
+        return obj
+    
+    poses_data = to_serializable(poses_data)
+    
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(poses_data),
+        headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+    )
+
+
+async def get_dope_objects(request):
+    """Get list of configured DOPE objects and their OBJ file paths."""
+    objects_info = {}
+    for obj_name, obj_config in DOPE_OBJECTS.items():
+        objects_info[obj_name] = {
+            "obj_path": obj_config["obj_path"],
+            "class_name": obj_config["class_name"],
+            "camera_id": obj_config["camera_id"],
+            "loaded": obj_name in dope_detectors
+        }
+    
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(objects_info)
     )
 
 
@@ -544,6 +650,8 @@ async def run_server(host="0.0.0.0", port=8080):
     app.router.add_post("/api/stream/reset", reset_streaming)
     app.router.add_get("/api/stream/status", get_streaming_status)
     app.router.add_get("/api/tool/pose", get_tool_pose)
+    app.router.add_get("/api/objects/poses", get_object_poses)
+    app.router.add_get("/api/objects/config", get_dope_objects)
     
     # Static files
     app.router.add_static('/videos/', 'data', show_index=False)
@@ -556,14 +664,16 @@ async def run_server(host="0.0.0.0", port=8080):
     await site.start()
     
     yolo_status = f"enabled on {yolo_device}" if yolo_detector else "disabled"
-    dope_status = "enabled" if dope_detector else "disabled"
     print(f"\n{'='*60}")
     print(f"  3D Scene Multi-Camera Server (Synchronized)")
     print(f"{'='*60}")
     print(f"  Web Interface:  http://{host}:{port}")
     print(f"  YOLO Camera:    {YOLO_CAMERA_ID} ({yolo_status})")
-    print(f"  DOPE Camera:    {DOPE_CAMERA_ID} ({dope_status})")
-    print(f"  DOPE Interval:  Every 6 frames")
+    print(f"  DOPE Objects:")
+    for obj_name, obj_config in DOPE_OBJECTS.items():
+        loaded = "loaded" if obj_name in dope_detectors else "not loaded"
+        print(f"    - {obj_name}: camera {obj_config['camera_id']} ({loaded})")
+    print(f"  DOPE Interval:  Every 5 frames")
     print(f"  Total Frames:   {sync_manager.total_frames}")
     print(f"  Cameras:        {len(sync_manager.cameras)}")
     print(f"  Streaming:      Waiting for Start command")
@@ -593,8 +703,8 @@ def main():
     # Load YOLO detector
     init_yolo()
 
-    # Load DOPE model for 6D pose estimation
-    load_dope_model()
+    # Load DOPE models for 6D pose estimation (multi-object)
+    load_dope_models()
 
     # Load calibration data
     load_calibration()

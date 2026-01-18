@@ -405,7 +405,7 @@
         <span class="control-value" id="planeScale">0.3m</span>
       </div>
       <div class="control-row">
-        <span class="control-label">DOPE 6D Pose</span>
+        <span class="control-label">DOPE Objects</span>
         <span
           class="control-value"
           id="dopeStatus"
@@ -414,7 +414,7 @@
         >
       </div>
       <div class="control-row">
-        <span class="control-label">Tool Position</span>
+        <span class="control-label">Object Position</span>
         <span class="control-value" id="toolPosition" style="font-size: 0.75em"
           >--</span
         >
@@ -480,13 +480,11 @@
       let frameCount = 0;
       let lastFpsTime = performance.now();
 
-      // eScrewDriver model reference for real-time pose updates
-      let eScrewDriverModel = null;
-      let eScrewDriverCentroid = new THREE.Vector3(0, 0, 0); // Model's centroid offset from origin
+      // Multi-object model references for real-time pose updates
+      let objectModels = {}; // object_name -> THREE.Object3D
+      let objectCentroids = {}; // object_name -> THREE.Vector3 (centroid offset)
+      let objectConfigs = {}; // object_name -> config from server (includes camera_id)
       let posePollingInterval = null;
-
-      // Camera ID for DOPE detection (coordinate transform reference)
-      const DOPE_CAMERA_ID = "142122070087";
 
       // DOM elements
       const container = document.getElementById("canvas-container");
@@ -667,16 +665,34 @@
         });
       }
 
-      // Load OBJ model with MTL material
-      async function loadOBJModel() {
-        const basePath = "videos/scanned_objects/e-screw-driver/";
-        const objFileName = "eScrewDriver.obj";
-        const mtlFileName = "eScrewDriver.mtl";
+      // Load DOPE objects configuration from server
+      async function loadDopeObjectsConfig() {
+        try {
+          const response = await fetch("/api/objects/config");
+          objectConfigs = await response.json();
+          console.log("DOPE objects config loaded:", Object.keys(objectConfigs));
+          return objectConfigs;
+        } catch (error) {
+          console.error("Failed to load DOPE objects config:", error);
+          return {};
+        }
+      }
 
-        console.log("Starting OBJ model load...");
-        console.log("Base path:", basePath);
-        console.log("OBJ file:", objFileName);
-        console.log("MTL file:", mtlFileName);
+      // Load OBJ model with MTL material for a specific object
+      async function loadOBJModel(objectName, objPath) {
+        // Convert the obj_path from server format to URL path
+        // obj_path: "data/scanned_objects/e-screw-driver/eScrewDriver.obj"
+        // URL: "videos/scanned_objects/e-screw-driver/eScrewDriver.obj"
+        const urlPath = objPath.replace("data/", "videos/");
+        const lastSlashIndex = urlPath.lastIndexOf("/");
+        const basePath = urlPath.substring(0, lastSlashIndex + 1);
+        const objFileName = urlPath.substring(lastSlashIndex + 1);
+        const mtlFileName = objFileName.replace(".obj", ".mtl");
+
+        console.log(`[${objectName}] Starting OBJ model load...`);
+        console.log(`[${objectName}] Base path:`, basePath);
+        console.log(`[${objectName}] OBJ file:`, objFileName);
+        console.log(`[${objectName}] MTL file:`, mtlFileName);
 
         return new Promise((resolve, reject) => {
           const mtlLoader = new MTLLoader();
@@ -686,7 +702,7 @@
             mtlFileName,
             (materials) => {
               materials.preload();
-              console.log("MTL materials loaded");
+              console.log(`[${objectName}] MTL materials loaded`);
 
               const objLoader = new OBJLoader();
               objLoader.setMaterials(materials);
@@ -694,7 +710,7 @@
               objLoader.load(
                 basePath + objFileName,
                 (object) => {
-                  console.log("OBJ model loaded successfully");
+                  console.log(`[${objectName}] OBJ model loaded successfully`);
 
                   // Apply scale
                   object.scale.set(1, 1, 1);
@@ -705,185 +721,207 @@
                   boundingBox.getCenter(center);
 
                   // Store the centroid offset (in model's local coordinates)
-                  eScrewDriverCentroid.copy(center);
+                  objectCentroids[objectName] = center.clone();
                   console.log(
-                    "Model centroid offset:",
+                    `[${objectName}] Model centroid offset:`,
                     center.toArray().map((v) => v.toFixed(4))
                   );
 
                   // Initially hidden until we get a pose
                   object.visible = false;
                   object.position.set(0, 0, 0);
+                  object.userData.objectName = objectName;
 
                   // Enable shadows if needed
                   object.traverse((child) => {
                     if (child instanceof THREE.Mesh) {
                       child.castShadow = true;
                       child.receiveShadow = true;
-                      console.log("Mesh found:", child.name || "unnamed");
                     }
                   });
 
                   scene.add(object);
 
                   // Store reference for pose updates
-                  eScrewDriverModel = object;
+                  objectModels[objectName] = object;
 
                   console.log(
-                    "OBJ model added to scene (hidden until DOPE detection)"
+                    `[${objectName}] OBJ model added to scene (hidden until DOPE detection)`
                   );
                   resolve(object);
                 },
                 (progress) => {
-                  const percent = (progress.loaded / progress.total) * 100;
-                  console.log(`Loading OBJ: ${percent.toFixed(1)}%`);
+                  if (progress.total > 0) {
+                    const percent = (progress.loaded / progress.total) * 100;
+                    console.log(`[${objectName}] Loading OBJ: ${percent.toFixed(1)}%`);
+                  }
                 },
                 (error) => {
-                  console.error(
-                    "Error loading OBJ file:",
-                    basePath + objFileName
-                  );
-                  console.error("OBJ Error details:", error);
-                  console.error(
-                    "Make sure the file exists at:",
-                    window.location.origin + "/" + basePath + objFileName
-                  );
+                  console.error(`[${objectName}] Error loading OBJ file:`, basePath + objFileName);
+                  console.error(`[${objectName}] OBJ Error details:`, error);
                   reject(error);
                 }
               );
             },
             (progress) => {
-              console.log("Loading MTL...", progress);
+              // MTL loading progress
             },
             (error) => {
-              console.error("Error loading MTL file:", basePath + mtlFileName);
-              console.error("MTL Error details:", error);
-              console.error(
-                "Make sure the file exists at:",
-                window.location.origin + "/" + basePath + mtlFileName
-              );
+              console.error(`[${objectName}] Error loading MTL file:`, basePath + mtlFileName);
+              console.error(`[${objectName}] MTL Error details:`, error);
               reject(error);
             }
           );
         });
       }
 
+      // Load all configured DOPE objects
+      async function loadAllDopeObjects() {
+        await loadDopeObjectsConfig();
+        
+        const loadPromises = [];
+        for (const [objectName, config] of Object.entries(objectConfigs)) {
+          if (config.obj_path) {
+            loadPromises.push(
+              loadOBJModel(objectName, config.obj_path).catch((error) => {
+                console.warn(`[${objectName}] Failed to load model, continuing:`, error);
+                return null;
+              })
+            );
+          }
+        }
+        
+        await Promise.all(loadPromises);
+        console.log(`Loaded ${Object.keys(objectModels).length} object models`);
+      }
+
       // DOM elements for DOPE status
       const dopeStatusEl = document.getElementById("dopeStatus");
       const toolPositionEl = document.getElementById("toolPosition");
 
-      // Fetch and update tool pose from DOPE detection
-      async function updateToolPose() {
-        if (!eScrewDriverModel) return;
+      // Fetch and update poses for all detected objects
+      async function updateObjectPoses() {
+        if (Object.keys(objectModels).length === 0) return;
 
         try {
-          const response = await fetch("/api/tool/pose");
-          const poseData = await response.json();
+          const response = await fetch("/api/objects/poses");
+          const posesData = await response.json();
 
-          if (poseData.detected) {
-            // Get the DOPE camera calibration for coordinate transform
-            const camCalib = calibrationData[DOPE_CAMERA_ID];
-            if (!camCalib || !camCalib.extrinsics) {
-              console.warn("No calibration for DOPE camera");
-              return;
+          let detectedCount = 0;
+          let totalObjects = Object.keys(objectModels).length;
+          let firstDetectedPos = null;
+
+          // Update each object
+          for (const [objectName, poseData] of Object.entries(posesData)) {
+            const model = objectModels[objectName];
+            const centroid = objectCentroids[objectName];
+            const config = objectConfigs[objectName];
+            
+            if (!model || !centroid || !config) continue;
+
+            if (poseData && poseData.detected) {
+              // Get the camera calibration for this object's assigned camera
+              const cameraId = poseData.camera_id || config.camera_id;
+              const camCalib = calibrationData[cameraId];
+              if (!camCalib || !camCalib.extrinsics) {
+                console.warn(`No calibration for camera ${cameraId} (object: ${objectName})`);
+                continue;
+              }
+
+              detectedCount++;
+
+              // Extract camera extrinsics (camera to world transform)
+              const ext = camCalib.extrinsics;
+              const camR = new THREE.Matrix4();
+              camR.set(
+                ext[0][0],
+                -ext[0][1],
+                -ext[0][2],
+                0,
+                -ext[1][0],
+                ext[1][1],
+                ext[1][2],
+                0,
+                -ext[2][0],
+                ext[2][1],
+                ext[2][2],
+                0,
+                0,
+                0,
+                0,
+                1
+              );
+              const camPos = new THREE.Vector3(ext[0][3], -ext[1][3], -ext[2][3]);
+              const camQuat = new THREE.Quaternion().setFromRotationMatrix(camR);
+
+              // Object pose from DOPE (in camera coordinates)
+              const objLocation = poseData.location; // [x, y, z] in meters
+              const objQuaternion = poseData.quaternion; // [x, y, z, w]
+
+              // Convert object position from camera to world coordinates
+              // In OpenCV camera: X-right, Y-down, Z-forward
+              // In Three.js: X-right, Y-up, Z-backward
+              const objLocalPos = new THREE.Vector3(
+                objLocation[0],
+                -objLocation[1], // Flip Y
+                -objLocation[2] // Flip Z
+              );
+
+              // Transform to world coordinates
+              objLocalPos.applyQuaternion(camQuat);
+              const worldPos = objLocalPos.add(camPos);
+
+              // Store first detected position for UI
+              if (!firstDetectedPos) {
+                firstDetectedPos = worldPos.clone();
+              }
+
+              // Convert object rotation from OpenCV to Three.js
+              // Quaternion from DOPE is in camera frame
+              const objQuat = new THREE.Quaternion(
+                objQuaternion[0],
+                -objQuaternion[1], // Flip Y
+                -objQuaternion[2], // Flip Z
+                objQuaternion[3]
+              );
+
+              // Combine with camera rotation
+              const worldQuat = camQuat.clone().multiply(objQuat);
+
+              // Flip the object 180 degrees around Y axis (in XZ plane)
+              const flipY = new THREE.Quaternion();
+              flipY.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
+              const flipZ = new THREE.Quaternion();
+              flipZ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+              const finalQuat = worldQuat.clone().multiply(flipY).multiply(flipZ);
+
+              // Apply pose to model's centroid (not origin)
+              // Rotate the centroid offset by the final rotation (including flip)
+              const rotatedCentroid = centroid.clone().applyQuaternion(finalQuat);
+
+              // Offset position so centroid is at the detected pose
+              const modelPos = worldPos.clone().sub(rotatedCentroid);
+
+              // Apply to model - always visible once detected
+              model.position.copy(modelPos);
+              model.quaternion.copy(finalQuat);
+              model.visible = true;
             }
+          }
 
-            // Extract camera extrinsics (camera to world transform)
-            const ext = camCalib.extrinsics;
-            const camR = new THREE.Matrix4();
-            camR.set(
-              ext[0][0],
-              -ext[0][1],
-              -ext[0][2],
-              0,
-              -ext[1][0],
-              ext[1][1],
-              ext[1][2],
-              0,
-              -ext[2][0],
-              ext[2][1],
-              ext[2][2],
-              0,
-              0,
-              0,
-              0,
-              1
-            );
-            const camPos = new THREE.Vector3(ext[0][3], -ext[1][3], -ext[2][3]);
-            const camQuat = new THREE.Quaternion().setFromRotationMatrix(camR);
-
-            // Object pose from DOPE (in camera coordinates)
-            const objLocation = poseData.location; // [x, y, z] in meters
-            const objQuaternion = poseData.quaternion; // [x, y, z, w]
-
-            // Convert object position from camera to world coordinates
-            // In OpenCV camera: X-right, Y-down, Z-forward
-            // In Three.js: X-right, Y-up, Z-backward
-            const objLocalPos = new THREE.Vector3(
-              objLocation[0],
-              -objLocation[1], // Flip Y
-              -objLocation[2] // Flip Z
-            );
-
-            // Transform to world coordinates
-            objLocalPos.applyQuaternion(camQuat);
-            const worldPos = objLocalPos.add(camPos);
-
-            // Convert object rotation from OpenCV to Three.js
-            // Quaternion from DOPE is in camera frame
-            const objQuat = new THREE.Quaternion(
-              objQuaternion[0],
-              -objQuaternion[1], // Flip Y
-              -objQuaternion[2], // Flip Z
-              objQuaternion[3]
-            );
-
-            // Combine with camera rotation
-            const worldQuat = camQuat.clone().multiply(objQuat);
-
-            // Flip the object 180 degrees around Y axis (in XZ plane)
-            const flipY = new THREE.Quaternion();
-            flipY.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
-            const flipZ = new THREE.Quaternion();
-            flipZ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-            const finalQuat = worldQuat.clone().multiply(flipY).multiply(flipZ);
-
-            // Apply pose to model's centroid (not origin)
-            // The DOPE pose specifies where the centroid should be
-            // We need to offset the model position so its centroid ends up there
-
-            // Rotate the centroid offset by the final rotation (including flip)
-            const rotatedCentroid = eScrewDriverCentroid
-              .clone()
-              .applyQuaternion(finalQuat);
-
-            // Offset position so centroid is at the detected pose
-            const modelPos = worldPos.clone().sub(rotatedCentroid);
-
-            // Apply to model - always visible once detected
-            eScrewDriverModel.position.copy(modelPos);
-            eScrewDriverModel.quaternion.copy(finalQuat);
-            eScrewDriverModel.visible = true;
-
-            // Update status indicators based on fresh or cached pose
+          // Update status indicators
+          if (detectedCount > 0) {
             statusDot.classList.add("active");
-            if (poseData.fresh) {
-              statusText.textContent = "Tool Detected";
-              dopeStatusEl.textContent = "DETECTED";
-              dopeStatusEl.style.color = "var(--accent-green)";
-            } else {
-              statusText.textContent = "Tool (cached)";
-              dopeStatusEl.textContent = "CACHED";
-              dopeStatusEl.style.color = "var(--accent-cyan)";
-            }
+            statusText.textContent = `${detectedCount}/${totalObjects} Objects`;
+            dopeStatusEl.textContent = `${detectedCount}/${totalObjects} DETECTED`;
+            dopeStatusEl.style.color = "var(--accent-green)";
 
-            // Show position in UI
-            toolPositionEl.textContent = `${worldPos.x.toFixed(
-              2
-            )}, ${worldPos.y.toFixed(2)}, ${worldPos.z.toFixed(2)}m`;
+            if (firstDetectedPos) {
+              toolPositionEl.textContent = `${firstDetectedPos.x.toFixed(
+                2
+              )}, ${firstDetectedPos.y.toFixed(2)}, ${firstDetectedPos.z.toFixed(2)}m`;
+            }
           } else {
-            // No detection yet - keep model hidden until first detection
-            // Model will remain visible at last position once detected
             dopeStatusEl.textContent = "Searching...";
             dopeStatusEl.style.color = "var(--accent-cyan)";
             toolPositionEl.textContent = "--";
@@ -901,21 +939,21 @@
         }
       }
 
-      // Start polling for tool pose updates
+      // Start polling for object pose updates
       function startPosePolling() {
         if (posePollingInterval) return;
-        posePollingInterval = setInterval(updateToolPose, 100); // Poll every 100ms
-        console.log("[Pose] Started polling for tool pose");
+        posePollingInterval = setInterval(updateObjectPoses, 100); // Poll every 100ms
+        console.log("[Pose] Started polling for object poses");
       }
 
-      // Stop polling for tool pose updates
+      // Stop polling for object pose updates
       function stopPosePolling() {
         if (posePollingInterval) {
           clearInterval(posePollingInterval);
           posePollingInterval = null;
-          console.log("[Pose] Stopped polling for tool pose");
+          console.log("[Pose] Stopped polling for object poses");
         }
-        // Keep the model visible at last known position (don't hide it)
+        // Keep models visible at last known position (don't hide them)
         // Just update status indicator
         dopeStatusEl.textContent = "Paused";
         dopeStatusEl.style.color = "var(--text-muted)";
@@ -1348,11 +1386,11 @@
           console.error("Failed to load GLB scene, continuing anyway:", error);
         }
 
-        // Load OBJ model (e-screw-driver)
+        // Load all DOPE object models (tool, case, etc.)
         try {
-          await loadOBJModel();
+          await loadAllDopeObjects();
         } catch (error) {
-          console.error("Failed to load OBJ model, continuing anyway:", error);
+          console.error("Failed to load DOPE object models, continuing anyway:", error);
         }
 
         // Create camera planes and frustums

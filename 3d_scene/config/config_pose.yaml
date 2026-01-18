@@ -12,6 +12,7 @@ weights: {
     # "mustard":"package://dope/weights/mustard_60.pth",
     #"soup":"package://dope/weights/soup_60.pth",
     "tool":"package://dope/weights/tool.pth",
+    "case":"package://dope/weights/case.pth",
     #"sugar":"package://dope/weights/sugar_60.pth",
     # "bleach":"package://dope/weights/bleach_28_dr.pth"
     
@@ -86,12 +87,14 @@ dimensions: {
     "Peaches" : [ 5.7781000137329102, 7.0961999893188477, 6.5925998687744141 ],
     "GreenBeans" : [ 5.758699893951416, 7.0608000755310059, 6.5732002258300781 ], 
     "PeasAndCarrots" : [ 5.8512001037597656, 7.0636000633239746, 6.5918002128601074 ],
-    "tool" : [ 20.0, 22.0, 7.0 ] 
+    "tool" : [ 20.0, 22.0, 7.0 ],
+    "case" : [ 15.0, 7.0, 20.0 ]
 }
 
 class_ids: {
     #"cracker": 1,
     "tool": 1,
+    "case": 2,
     "gelatin": 2,
     "meat":    3,
     "mustard": 4,
@@ -130,7 +133,8 @@ class_ids: {
 
 draw_colors: {
     #"cracker": [13, 255, 128],  # green
-    "tool": [255, 255, 255],  # red
+    "tool": [255, 255, 255],  # white
+    "case": [0, 255, 128],  # green
     "gelatin": [255, 255, 255],  # while
     "meat": [0, 104, 255],  # blue
     "mustard": [217,12, 232],  # magenta
@@ -170,12 +174,13 @@ mesh_scales: {
     "sugar":   0.01,
     "bleach":  0.01,
     "tool":    0.001,
+    "case":    0.001,
 }
 
 overlay_belief_images: True   # Whether to overlay the input image on the belief images published on /dope/belief_[obj_name]
 
 # Config params for DOPE
-thresh_angle: 0.5
+thresh_angle: 0.3
 thresh_map: 0.01
-sigma: 2
-thresh_points: 0.01
+sigma: 3
+thresh_points: 0.1
