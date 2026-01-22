@@ -459,7 +459,7 @@
       let vggtPointCloudGroup = null; // Group to hold point cloud with transformation
       let vggtPollingInterval = null;
       let vggtLastPointCount = 0;
-      const VGGT_REFERENCE_CAMERA = "142122070087"; // Reference camera for VGGT point cloud
+      const VGGT_ORIGIN_CAMERA = "135122071615"; // Reference camera for VGGT point cloud (first VGGT input camera)
 
       // DOM elements
       const container = document.getElementById("canvas-container");
@@ -616,7 +616,7 @@
                 model.quaternion.copy(quaternion);
 
                 // Scale if needed (uncomment if GLB is in mm instead of meters)
-                model.scale.set(1, 1, 1);
+                model.scale.set(1.4, 1.4, 1.4);
 
                 console.log(
                   `GLB model positioned at camera ${glbOriginCameraId}:`,
@@ -931,7 +931,7 @@
         geometry.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
         
         const material = new THREE.PointsMaterial({
-          size: 0.005,
+          size: 0.015,
           vertexColors: true,
           sizeAttenuation: true
         });
@@ -940,11 +940,34 @@
         vggtPointCloudGroup.add(vggtPointCloud);
         vggtPointCloudGroup.visible = false;
         
-        // Position the point cloud group relative to reference camera (135122071615)
-        // Same transformation as the GLB scene
-        const calibration = calibrationData[VGGT_REFERENCE_CAMERA];
+        // Scale the point cloud to match the GLB scene scale
+        vggtPointCloudGroup.scale.set(1.4, 1.4, 1.4);
+        
+        // Position the point cloud group relative to the reference camera (135122071615)
+        updateVGGTPointCloudOrigin(VGGT_ORIGIN_CAMERA);
+        
+        scene.add(vggtPointCloudGroup);
+        console.log("[VGGT] Point cloud initialized");
+      }
+      
+      // Update VGGT point cloud position based on selected origin camera
+      // This transforms points from VGGT's coordinate system (first camera at origin)
+      // to the world coordinate system used by the calibrated cameras
+      function updateVGGTPointCloudOrigin(cameraId) {
+        if (!vggtPointCloudGroup) return;
+        
+        const calibration = calibrationData[cameraId];
         if (calibration && calibration.extrinsics) {
           const ext = calibration.extrinsics;
+          
+          // The extrinsics are camera-to-world transforms (4x4 matrix)
+          // They define where the camera is in world coordinates
+          // 
+          // VGGT outputs points in its own coordinate system where the first
+          // input camera is at the origin. To align with our world coordinate
+          // system, we apply the selected camera's extrinsics.
+          //
+          // For best alignment, select the first VGGT input camera (135122071615)
           
           // Extract translation and rotation from camera extrinsics
           const t = [ext[0][3], ext[1][3], ext[2][3]];
@@ -954,10 +977,13 @@
             [ext[2][0], ext[2][1], ext[2][2]],
           ];
           
-          // Convert from OpenCV to Three.js coordinate system
+          // Convert camera position from OpenCV to Three.js coordinate system
+          // OpenCV: X-right, Y-down, Z-forward
+          // Three.js: X-right, Y-up, Z-backward
           const position = new THREE.Vector3(t[0], -t[1], -t[2]);
           
-          // Build rotation matrix in Three.js coordinates
+          // Convert rotation matrix from OpenCV to Three.js coordinates
+          // The conversion flips the Y and Z components of the rotation
           const rotMatrix = new THREE.Matrix4();
           rotMatrix.set(
             R[0][0], -R[0][1], -R[0][2], 0,
@@ -969,23 +995,16 @@
           const quaternion = new THREE.Quaternion();
           quaternion.setFromRotationMatrix(rotMatrix);
           
-          // Rotate 180 degrees around Y axis to face correct direction
-          const flip180 = new THREE.Quaternion();
-          flip180.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-          quaternion.multiply(flip180);
-          
           // Apply transformation to the group
+          // This positions the VGGT point cloud in world coordinates
           vggtPointCloudGroup.position.copy(position);
           vggtPointCloudGroup.quaternion.copy(quaternion);
           
-          console.log(`[VGGT] Point cloud positioned at camera ${VGGT_REFERENCE_CAMERA}:`, 
+          console.log(`[VGGT] Point cloud origin set to camera ${cameraId}:`, 
             position.toArray().map(v => v.toFixed(3)));
         } else {
-          console.warn("[VGGT] No calibration found for reference camera, using origin");
+          console.warn(`[VGGT] No calibration found for camera ${cameraId}, keeping current position`);
         }
-        
-        scene.add(vggtPointCloudGroup);
-        console.log("[VGGT] Point cloud initialized");
       }
 
       // Update VGGT point cloud from server data
@@ -998,7 +1017,18 @@
           
           if (data.success && data.num_points > 0) {
             // Update geometry with new points
-            const positions = new Float32Array(data.points.flat());
+            // Convert from VGGT/OpenCV coordinates (X-right, Y-down, Z-forward)
+            // to Three.js coordinates (X-right, Y-up, Z-backward)
+            const rawPoints = data.points;
+            const positions = new Float32Array(rawPoints.length * 3);
+            
+            for (let i = 0; i < rawPoints.length; i++) {
+              const pt = rawPoints[i];
+              positions[i * 3]     = pt[0];      // X stays the same
+              positions[i * 3 + 1] = -pt[1];     // Y is negated (down -> up)
+              positions[i * 3 + 2] = -pt[2];     // Z is negated (forward -> backward)
+            }
+            
             const colors = new Float32Array(data.colors.flat().map(c => c / 255)); // Normalize to 0-1
             
             vggtPointCloud.geometry.setAttribute('position', 
