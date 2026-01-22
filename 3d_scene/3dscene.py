@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Import inference modules
 from dope_inference import load_dope_detector, create_empty_pose
 from yolo_inference import load_yolo_model, YOLODetector
+from vggt_inference import load_vggt_detector, create_empty_point_cloud
 
 # Try to import orjson for faster JSON serialization
 try:
@@ -51,6 +52,21 @@ DOPE_OBJECTS = {
     }
 }
 
+# VGGT configuration - 3D point cloud reconstruction from multi-view cameras
+VGGT_WEIGHTS_PATH = "weights/vggt.pt"
+VGGT_CONF_THRESHOLD_PCT = 60.0  # Filter out bottom 50% low-confidence points
+VGGT_MAX_POINTS = 50000
+# Camera IDs used for VGGT inference (order matters - matches the 7 input frames)
+VGGT_CAMERA_IDS = [
+    "135122071615",
+    "137322071489",
+    "141722071426",
+    "141722073953",
+    "141722075184",
+    "141722079467",
+    "142122070087"
+]
+
 # =============================================================================
 # Global State
 # =============================================================================
@@ -65,6 +81,12 @@ streaming_active = False  # Controls whether frame processing is active
 dope_detectors = {}  # object_name -> DOPEDetector instance
 current_object_poses = {}  # object_name -> pose dict
 pose_lock = threading.Lock()
+
+# VGGT 3D reconstruction state
+vggt_detector = None  # VGGTDetector instance
+vggt_enabled = False  # Whether VGGT inference is enabled (can be toggled from UI)
+current_point_cloud = None  # Current point cloud data
+point_cloud_lock = threading.Lock()
 
 
 # =============================================================================
@@ -98,6 +120,14 @@ class SyncedVideoManager:
         self.dope_inference_interval = 8  # Run DOPE every 5 frames
         self.dope_inference_counter = 0
         self.cached_dope_results = {}  # object_name -> detection result
+        
+        # VGGT 3D reconstruction state
+        self.vggt_detector = None  # VGGTDetector instance
+        self.vggt_camera_ids = []  # Camera IDs used for VGGT (in order)
+        self.vggt_inference_interval = 20  # Run VGGT every N frames (configurable)
+        self.vggt_inference_counter = 0
+        self.vggt_enabled = False  # Toggle for VGGT inference
+        self.cached_vggt_result = None  # Cached point cloud result
         
         # FPS tracking (simplified)
         self.fps_start_time = time.perf_counter()
@@ -177,21 +207,58 @@ class SyncedVideoManager:
         
         print(f"[DOPE] Enabled '{object_name}' detector on camera {camera_id}")
     
+    def set_vggt_detector(self, detector, camera_ids, inference_interval=20):
+        """Set VGGT detector for 3D point cloud reconstruction.
+        
+        Args:
+            detector: VGGTDetector instance
+            camera_ids: List of camera IDs to use for VGGT (in order)
+            inference_interval: Run VGGT every N frames
+        """
+        self.vggt_detector = detector
+        self.vggt_camera_ids = camera_ids
+        self.vggt_inference_interval = inference_interval
+        print(f"[VGGT] Enabled on cameras: {camera_ids} (every {inference_interval} frames)")
+    
+    def set_vggt_enabled(self, enabled):
+        """Enable or disable VGGT inference.
+        
+        Args:
+            enabled: Boolean to enable/disable VGGT
+        """
+        self.vggt_enabled = enabled
+        print(f"[VGGT] {'Enabled' if enabled else 'Disabled'}")
+    
+    def set_vggt_interval(self, interval):
+        """Set how often VGGT inference runs.
+        
+        Args:
+            interval: Run VGGT every N frames
+        """
+        self.vggt_inference_interval = max(1, interval)
+        print(f"[VGGT] Inference interval set to every {self.vggt_inference_interval} frames")
+    
     def reset_playback(self):
         """Reset playback to the beginning."""
-        global current_object_poses
+        global current_object_poses, current_point_cloud
         with self.lock:
             self.current_frame = 0
             self.yolo_inference_counter = 0
             self.cached_yolo_results = None
             self.dope_inference_counter = 0
             self.cached_dope_results = {}
+            self.vggt_inference_counter = 0
+            self.cached_vggt_result = None
             self.fps_start_time = time.perf_counter()
             self.fps_frame_count = 0
             
             # Reset all object poses
             with pose_lock:
                 current_object_poses = {name: create_empty_pose() for name in self.dope_detectors}
+            
+            # Reset point cloud
+            with point_cloud_lock:
+                current_point_cloud = None
             
             # Seek all cameras to frame 0 (only time we seek)
             for cam_data in self.cameras.values():
@@ -200,26 +267,32 @@ class SyncedVideoManager:
             
             print("[SyncManager] Playback reset to frame 0")
     
-    def _process_camera(self, camera_id, run_inference):
+    def _process_camera(self, camera_id, run_inference, collect_raw_for_vggt=False):
         """Process a single camera frame (for parallel execution).
         
         Args:
             camera_id: Camera ID to process
             run_inference: Tuple of (run_yolo, run_dope) booleans
+            collect_raw_for_vggt: If True, also return raw frame for VGGT
         
         Returns:
-            Tuple of (camera_id, jpeg_bytes, dope_results_dict or None)
+            Tuple of (camera_id, jpeg_bytes, dope_results_dict or None, ended, raw_frame or None)
         """
         run_yolo, run_dope = run_inference
         cam_data = self.cameras[camera_id]
         cap = cam_data['cap']
         dope_results = {}
+        raw_frame = None
         
         # Read next frame
         ret, frame = cap.read()
         
         if not ret:
-            return (camera_id, None, None, True)  # Signal video end
+            return (camera_id, None, None, True, None)  # Signal video end
+        
+        # Store raw frame for VGGT if needed
+        if collect_raw_for_vggt and self.vggt_camera_ids and camera_id in self.vggt_camera_ids:
+            raw_frame = frame.copy()
         
         # Run YOLO on designated camera
         yolo_results = None
@@ -271,11 +344,11 @@ class SyncedVideoManager:
         # Encode as JPEG using pre-allocated params
         _, jpeg = cv2.imencode('.jpg', frame, self.jpeg_params)
         
-        return (camera_id, jpeg.tobytes(), dope_results, False)
+        return (camera_id, jpeg.tobytes(), dope_results, False, raw_frame)
     
     def advance_frame(self):
         """Advance to the next frame and update all cameras (optimized parallel processing)."""
-        global current_object_poses
+        global current_object_poses, current_point_cloud
         
         # Calculate FPS outside the heavy processing
         self.fps_frame_count += 1
@@ -289,24 +362,31 @@ class SyncedVideoManager:
         # Determine which inferences to run this frame
         run_yolo = (self.yolo_inference_counter % self.yolo_inference_interval) == 0
         run_dope = (self.dope_inference_counter % self.dope_inference_interval) == 0
+        run_vggt = (self.vggt_enabled and 
+                   self.vggt_detector is not None and 
+                   (self.vggt_inference_counter % self.vggt_inference_interval) == 0)
         
         self.current_frame += 1
         self.yolo_inference_counter += 1
         self.dope_inference_counter += 1
+        self.vggt_inference_counter += 1
         
         # Process cameras in parallel for heavy inference frames, sequential otherwise
         video_ended = False
+        vggt_raw_frames = {}  # camera_id -> raw frame for VGGT
         
         if run_dope and len(self.dope_objects_by_camera) > 1:
             # Parallel processing when running DOPE on multiple cameras
             futures = []
             for camera_id in self.camera_ids_list:
-                future = self.executor.submit(self._process_camera, camera_id, (run_yolo, run_dope))
+                future = self.executor.submit(
+                    self._process_camera, camera_id, (run_yolo, run_dope), run_vggt
+                )
                 futures.append(future)
             
             # Collect results
             for future in futures:
-                camera_id, jpeg_data, dope_results, ended = future.result()
+                camera_id, jpeg_data, dope_results, ended, raw_frame = future.result()
                 if ended:
                     video_ended = True
                 else:
@@ -318,11 +398,13 @@ class SyncedVideoManager:
                                 result["fresh"] = True
                                 current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
+                    if raw_frame is not None:
+                        vggt_raw_frames[camera_id] = raw_frame
         else:
             # Sequential processing for lighter frames
             for camera_id in self.camera_ids_list:
-                camera_id, jpeg_data, dope_results, ended = self._process_camera(
-                    camera_id, (run_yolo, run_dope)
+                camera_id, jpeg_data, dope_results, ended, raw_frame = self._process_camera(
+                    camera_id, (run_yolo, run_dope), run_vggt
                 )
                 if ended:
                     video_ended = True
@@ -334,6 +416,23 @@ class SyncedVideoManager:
                                 result["fresh"] = True
                                 current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
+                    if raw_frame is not None:
+                        vggt_raw_frames[camera_id] = raw_frame
+        
+        # Run VGGT inference if enabled and we have all required frames
+        if run_vggt and len(vggt_raw_frames) == len(self.vggt_camera_ids):
+            # Collect frames in the correct order
+            vggt_frames = [vggt_raw_frames[cam_id] for cam_id in self.vggt_camera_ids]
+            
+            # Run VGGT inference in background thread to not block frame processing
+            def run_vggt_async():
+                global current_point_cloud
+                result = self.vggt_detector.run_inference(vggt_frames)
+                with point_cloud_lock:
+                    current_point_cloud = result
+                    self.cached_vggt_result = result
+            
+            self.executor.submit(run_vggt_async)
         
         # Handle video loop
         if video_ended:
@@ -341,12 +440,14 @@ class SyncedVideoManager:
     
     def _reset_all_captures(self):
         """Reset all video captures to frame 0."""
-        global current_object_poses
+        global current_object_poses, current_point_cloud
         self.current_frame = 0
         self.yolo_inference_counter = 0
         self.cached_yolo_results = None
         self.dope_inference_counter = 0
         self.cached_dope_results = {}
+        self.vggt_inference_counter = 0
+        self.cached_vggt_result = None
         self.fps_start_time = time.perf_counter()
         self.fps_frame_count = 0
         
@@ -355,6 +456,9 @@ class SyncedVideoManager:
         
         with pose_lock:
             current_object_poses = {name: create_empty_pose() for name in self.dope_detectors}
+        
+        with point_cloud_lock:
+            current_point_cloud = None
     
     def get_frame(self, camera_id):
         """Get cached frame for a camera."""
@@ -438,6 +542,24 @@ def load_dope_models():
     return dope_detectors
 
 
+def load_vggt_model():
+    """Load VGGT model for 3D point cloud reconstruction."""
+    global vggt_detector
+    
+    vggt_detector = load_vggt_detector(
+        weights_path=VGGT_WEIGHTS_PATH,
+        conf_threshold_pct=VGGT_CONF_THRESHOLD_PCT,
+        max_points=VGGT_MAX_POINTS
+    )
+    
+    if vggt_detector is not None:
+        print(f"[VGGT] Model loaded successfully")
+    else:
+        print(f"[VGGT] Warning: Could not load VGGT model (weights: {VGGT_WEIGHTS_PATH})")
+    
+    return vggt_detector
+
+
 def load_calibration():
     """Load camera calibration data from YAML file and transform to checkerboard origin."""
     global calibration_data
@@ -490,7 +612,7 @@ def load_calibration():
 
 def init_sync_manager():
     """Initialize synchronized video manager."""
-    global sync_manager, yolo_detector, dope_detectors
+    global sync_manager, yolo_detector, dope_detectors, vggt_detector
 
     sync_manager = SyncedVideoManager()
 
@@ -516,6 +638,16 @@ def init_sync_manager():
     for obj_name, detector in dope_detectors.items():
         camera_id = DOPE_OBJECTS[obj_name].get("camera_id", "142122070087")
         sync_manager.set_dope_detector(detector, camera_id, obj_name)
+    
+    # Set VGGT detector with camera IDs
+    if vggt_detector is not None:
+        # Filter to only cameras that exist in our video manager
+        valid_vggt_cameras = [cam_id for cam_id in VGGT_CAMERA_IDS 
+                             if cam_id in sync_manager.cameras]
+        if len(valid_vggt_cameras) == len(VGGT_CAMERA_IDS):
+            sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=20)
+        else:
+            print(f"[VGGT] Warning: Not all VGGT cameras available. Need: {VGGT_CAMERA_IDS}, Have: {list(sync_manager.cameras.keys())}")
     
     print(f"[SyncManager] Initialized with {len(sync_manager.cameras)} cameras, synced to {sync_manager.total_frames} frames")
 
@@ -715,6 +847,109 @@ async def get_dope_objects(request):
     )
 
 
+# =============================================================================
+# VGGT Point Cloud API Routes
+# =============================================================================
+
+async def get_vggt_point_cloud(request):
+    """Get current VGGT point cloud data.
+    
+    Returns point cloud positions and colors for 3D visualization.
+    Points are in world coordinates.
+    """
+    global current_point_cloud
+    
+    with point_cloud_lock:
+        if current_point_cloud is None or not current_point_cloud.get('success', False):
+            return web.Response(
+                content_type="application/json",
+                text='{"success":false,"num_points":0}',
+                headers=NO_CACHE_HEADERS
+            )
+        
+        # Convert numpy arrays to lists for JSON serialization
+        result = {
+            'success': True,
+            'num_points': current_point_cloud['num_points'],
+            'points': current_point_cloud['points'].tolist(),
+            'colors': current_point_cloud['colors'].tolist(),
+            'inference_time': current_point_cloud.get('inference_time', 0)
+        }
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps(result),
+        headers=NO_CACHE_HEADERS
+    )
+
+
+async def get_vggt_status(request):
+    """Get VGGT status including enabled state and configuration."""
+    global sync_manager, vggt_detector
+    
+    status = {
+        'loaded': vggt_detector is not None,
+        'enabled': sync_manager.vggt_enabled if sync_manager else False,
+        'inference_interval': sync_manager.vggt_inference_interval if sync_manager else 20,
+        'camera_ids': VGGT_CAMERA_IDS,
+        'conf_threshold_pct': VGGT_CONF_THRESHOLD_PCT,
+        'max_points': VGGT_MAX_POINTS
+    }
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps(status),
+        headers=NO_CACHE_HEADERS
+    )
+
+
+async def set_vggt_enabled(request):
+    """Enable or disable VGGT inference."""
+    global sync_manager, vggt_enabled
+    
+    try:
+        data = await request.json()
+        enabled = data.get('enabled', False)
+        
+        if sync_manager:
+            sync_manager.set_vggt_enabled(enabled)
+            vggt_enabled = enabled
+        
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': True, 'enabled': enabled})
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': False, 'error': str(e)}),
+            status=400
+        )
+
+
+async def set_vggt_interval(request):
+    """Set VGGT inference interval (how often to run)."""
+    global sync_manager
+    
+    try:
+        data = await request.json()
+        interval = int(data.get('interval', 20))
+        
+        if sync_manager:
+            sync_manager.set_vggt_interval(interval)
+        
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': True, 'interval': interval})
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': False, 'error': str(e)}),
+            status=400
+        )
+
+
 async def on_shutdown(app):
     """Cleanup on shutdown."""
     global streaming_active
@@ -744,6 +979,12 @@ async def run_server(host="0.0.0.0", port=8085):
     app.router.add_get("/api/objects/poses", get_object_poses)
     app.router.add_get("/api/objects/config", get_dope_objects)
     
+    # VGGT routes
+    app.router.add_get("/api/vggt/pointcloud", get_vggt_point_cloud)
+    app.router.add_get("/api/vggt/status", get_vggt_status)
+    app.router.add_post("/api/vggt/enable", set_vggt_enabled)
+    app.router.add_post("/api/vggt/interval", set_vggt_interval)
+    
     # Static files
     app.router.add_static('/videos/', 'data', show_index=False)
     
@@ -755,6 +996,7 @@ async def run_server(host="0.0.0.0", port=8085):
     await site.start()
     
     yolo_status = f"enabled on {yolo_device}" if yolo_detector else "disabled"
+    vggt_status = "loaded (disabled by default)" if vggt_detector else "not loaded"
     print(f"\n{'='*60}")
     print(f"  3D Scene Multi-Camera Server (Synchronized)")
     print(f"{'='*60}")
@@ -764,7 +1006,10 @@ async def run_server(host="0.0.0.0", port=8085):
     for obj_name, obj_config in DOPE_OBJECTS.items():
         loaded = "loaded" if obj_name in dope_detectors else "not loaded"
         print(f"    - {obj_name}: camera {obj_config['camera_id']} ({loaded})")
-    print(f"  DOPE Interval:  Every 5 frames")
+    print(f"  DOPE Interval:  Every 8 frames")
+    print(f"  VGGT Status:    {vggt_status}")
+    print(f"  VGGT Cameras:   {VGGT_CAMERA_IDS}")
+    print(f"  VGGT Interval:  Every {sync_manager.vggt_inference_interval} frames (configurable)")
     print(f"  Total Frames:   {sync_manager.total_frames}")
     print(f"  Cameras:        {len(sync_manager.cameras)}")
     print(f"  Streaming:      Waiting for Start command")
@@ -796,6 +1041,9 @@ def main():
 
     # Load DOPE models for 6D pose estimation (multi-object)
     load_dope_models()
+
+    # Load VGGT model for 3D point cloud reconstruction
+    load_vggt_model()
 
     # Load calibration data
     load_calibration()
