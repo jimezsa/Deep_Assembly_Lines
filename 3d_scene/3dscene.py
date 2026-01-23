@@ -662,7 +662,7 @@ def init_sync_manager():
     
     # Set DOPE detectors with per-object camera assignments
     for obj_name, detector in dope_detectors.items():
-        camera_id = DOPE_OBJECTS[obj_name].get("camera_id", "142122070087")
+        camera_id = DOPE_OBJECTS[obj_name].get("camera_id")
         sync_manager.set_dope_detector(detector, camera_id, obj_name)
     
     # Set VGGT detector with camera IDs
@@ -671,7 +671,7 @@ def init_sync_manager():
         valid_vggt_cameras = [cam_id for cam_id in VGGT_CAMERA_IDS 
                              if cam_id in sync_manager.cameras]
         if len(valid_vggt_cameras) == len(VGGT_CAMERA_IDS):
-            sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=20)
+            sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=6)
         else:
             print(f"[VGGT] Warning: Not all VGGT cameras available. Need: {VGGT_CAMERA_IDS}, Have: {list(sync_manager.cameras.keys())}")
     
