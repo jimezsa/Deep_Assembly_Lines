@@ -34,7 +34,7 @@ YOLO_CAMERA_ID = "137322071489"
 
 # DOPE configuration
 DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
-DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
+#DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
 
 # Multiple object configurations for DOPE detection (each with its own camera)
 DOPE_OBJECTS = {
@@ -42,13 +42,15 @@ DOPE_OBJECTS = {
         "weights_path": "weights/dope_tool.pth",
         "class_name": "tool",
         "obj_path": "data/scanned_objects/e-screw-driver/eScrewDriver.obj",
-        "camera_id": "142122070087"
+        "camera_id": "142122070087",
+        "camera_info_path": "3d_scene/config/camera_info_87.yaml"
     },
     "case": {
         "weights_path": "weights/dope_case.pth",
         "class_name": "case",
         "obj_path": "data/scanned_objects/case/case.obj",
-        "camera_id": "135122071615"
+        "camera_id": "135122071615",
+        "camera_info_path": "3d_scene/config/camera_info_15.yaml"
     }
 }
 
@@ -81,6 +83,7 @@ streaming_active = False  # Controls whether frame processing is active
 dope_detectors = {}  # object_name -> DOPEDetector instance
 current_object_poses = {}  # object_name -> pose dict
 pose_lock = threading.Lock()
+first_detection_flags = {}  # object_name -> bool (True if first detection captured)
 
 # VGGT 3D reconstruction state
 vggt_detector = None  # VGGTDetector instance
@@ -240,7 +243,7 @@ class SyncedVideoManager:
     
     def reset_playback(self):
         """Reset playback to the beginning."""
-        global current_object_poses, current_point_cloud
+        global current_object_poses, current_point_cloud, first_detection_flags
         with self.lock:
             self.current_frame = 0
             self.yolo_inference_counter = 0
@@ -255,6 +258,9 @@ class SyncedVideoManager:
             # Reset all object poses
             with pose_lock:
                 current_object_poses = {name: create_empty_pose() for name in self.dope_detectors}
+                # Reset first detection flags for all objects
+                for obj_name in self.dope_detectors:
+                    first_detection_flags[obj_name] = False
             
             # Reset point cloud
             with point_cloud_lock:
@@ -396,7 +402,14 @@ class SyncedVideoManager:
                         with pose_lock:
                             for obj_name, result in dope_results.items():
                                 result["fresh"] = True
-                                current_object_poses[obj_name] = result
+                                # Only update case on first detection, always update other objects
+                                if obj_name == "case":
+                                    if not first_detection_flags.get(obj_name, False):
+                                        current_object_poses[obj_name] = result
+                                        first_detection_flags[obj_name] = True
+                                        print(f"[DOPE] First detection of '{obj_name}' captured and locked")
+                                else:
+                                    current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
                     if raw_frame is not None:
                         vggt_raw_frames[camera_id] = raw_frame
@@ -414,7 +427,14 @@ class SyncedVideoManager:
                         with pose_lock:
                             for obj_name, result in dope_results.items():
                                 result["fresh"] = True
-                                current_object_poses[obj_name] = result
+                                # Only update case on first detection, always update other objects
+                                if obj_name == "case":
+                                    if not first_detection_flags.get(obj_name, False):
+                                        current_object_poses[obj_name] = result
+                                        first_detection_flags[obj_name] = True
+                                        print(f"[DOPE] First detection of '{obj_name}' captured and locked")
+                                else:
+                                    current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
                     if raw_frame is not None:
                         vggt_raw_frames[camera_id] = raw_frame
@@ -440,7 +460,7 @@ class SyncedVideoManager:
     
     def _reset_all_captures(self):
         """Reset all video captures to frame 0."""
-        global current_object_poses, current_point_cloud
+        global current_object_poses, current_point_cloud, first_detection_flags
         self.current_frame = 0
         self.yolo_inference_counter = 0
         self.cached_yolo_results = None
@@ -456,6 +476,9 @@ class SyncedVideoManager:
         
         with pose_lock:
             current_object_poses = {name: create_empty_pose() for name in self.dope_detectors}
+            # Reset first detection flags for all objects
+            for obj_name in self.dope_detectors:
+                first_detection_flags[obj_name] = False
         
         with point_cloud_lock:
             current_point_cloud = None
@@ -516,25 +539,28 @@ def init_yolo():
 
 def load_dope_models():
     """Load DOPE models for 6D pose estimation (multi-object support)."""
-    global dope_detectors, current_object_poses
+    global dope_detectors, current_object_poses, first_detection_flags
     
     dope_detectors = {}
     current_object_poses = {}
+    first_detection_flags = {}
     
     for obj_name, obj_config in DOPE_OBJECTS.items():
         weights_path = obj_config["weights_path"]
         class_name = obj_config["class_name"]
+        camera_info_path = obj_config["camera_info_path"]
         
         detector = load_dope_detector(
             weights_path=weights_path,
             config_path=DOPE_CONFIG_PATH,
-            camera_info_path=DOPE_CAMERA_INFO_PATH,
+            camera_info_path=camera_info_path,
             class_name=class_name
         )
         
         if detector is not None:
             dope_detectors[obj_name] = detector
             current_object_poses[obj_name] = create_empty_pose()
+            first_detection_flags[obj_name] = False  # Track first detection
             print(f"[DOPE] Loaded detector for '{obj_name}'")
         else:
             print(f"[DOPE] Warning: Could not load detector for '{obj_name}' (weights: {weights_path})")

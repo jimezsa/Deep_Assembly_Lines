@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -375,22 +375,48 @@
         <span class="control-label">Cameras</span>
         <span class="control-value" id="cameraCount">0</span>
       </div>
-      <div class="button-group" style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #333333;">
-        <button class="btn btn-primary" id="startBtn" style="width: 100%;">Start Streams</button>
+      <div
+        class="button-group"
+        style="
+          margin-bottom: 15px;
+          padding-bottom: 15px;
+          border-bottom: 1px solid #333333;
+        "
+      >
+        <button class="btn btn-primary" id="startBtn" style="width: 100%">
+          Start Streams
+        </button>
       </div>
-      
+
       <!-- VGGT Controls -->
-      <div class="panel-title" style="margin-top: 15px;">VGGT Point Cloud</div>
+      <div class="panel-title" style="margin-top: 15px">VGGT Point Cloud</div>
       <div class="control-row">
-        <label class="control-label" for="vggtEnabled" style="cursor: pointer;">
-          <input type="checkbox" id="vggtEnabled" style="margin-right: 8px; cursor: pointer;">
+        <label class="control-label" for="vggtEnabled" style="cursor: pointer">
+          <input
+            type="checkbox"
+            id="vggtEnabled"
+            style="margin-right: 8px; cursor: pointer"
+          />
           Enable VGGT
         </label>
-        <span class="control-value" id="vggtStatus" style="color: #888;">Off</span>
+        <span class="control-value" id="vggtStatus" style="color: #888"
+          >Off</span
+        >
       </div>
       <div class="control-row">
         <span class="control-label">Interval (frames)</span>
-        <select id="vggtInterval" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px 8px; font-size: 0.85em; cursor: pointer;">
+        <select
+          id="vggtInterval"
+          style="
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.85em;
+            cursor: pointer;
+          "
+        >
           <option value="6">6</option>
           <option value="10">10</option>
           <option value="20" selected>20</option>
@@ -402,9 +428,15 @@
         <span class="control-label">Points</span>
         <span class="control-value" id="vggtPoints">0</span>
       </div>
-      
-      <div style="border-top: 1px solid #333333; margin-top: 15px; padding-top: 15px;">
-        <div class="panel-title" style="margin-top: 0;">Cameras</div>
+
+      <div
+        style="
+          border-top: 1px solid #333333;
+          margin-top: 15px;
+          padding-top: 15px;
+        "
+      >
+        <div class="panel-title" style="margin-top: 0">Cameras</div>
       </div>
       <div id="cameraList"></div>
     </div>
@@ -453,6 +485,9 @@
       let objectConfigs = {}; // object_name -> config from server (includes camera_id)
       let posePollingInterval = null;
 
+      // First detection tracking - store first detected position for "case" object
+      let firstDetectedPose = {}; // object_name -> {position: THREE.Vector3, quaternion: THREE.Quaternion}
+
       // VGGT point cloud state
       let vggtEnabled = false;
       let vggtPointCloud = null; // THREE.Points object
@@ -469,7 +504,7 @@
       const cameraCountEl = document.getElementById("cameraCount");
       const cameraListEl = document.getElementById("cameraList");
       const startBtn = document.getElementById("startBtn");
-      
+
       // VGGT DOM elements
       const vggtEnabledCheckbox = document.getElementById("vggtEnabled");
       const vggtIntervalSelect = document.getElementById("vggtInterval");
@@ -490,7 +525,7 @@
           60,
           window.innerWidth / window.innerHeight,
           0.1,
-          100
+          100,
         );
         // Position to see the multi-camera setup from above and side
         camera.position.set(1.5, 1.5, 2.5);
@@ -549,7 +584,7 @@
       // Load GLB scene - origin is at camera 141722079467, 138422075916
       async function loadGLBScene() {
         const loader = new GLTFLoader();
-        const glbPath = "videos/VGGT_demo/calib_david_glbscene_5.2.glb";
+        const glbPath = "videos/VGGT_demo/calib_david_glbscene_50.2.glb";
 
         //  "videos/VGGT_demo/calib_glbscene_24.2_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
         //"videos/VGGT_demo/calib_glbscene_48.1_All_maskbFalse_maskwFalse_camTrue_skyFalse_predDepthmap_and_Camera_Branch.glb";
@@ -600,7 +635,7 @@
                   0,
                   0,
                   0,
-                  1
+                  1,
                 );
 
                 const quaternion = new THREE.Quaternion();
@@ -620,7 +655,7 @@
 
                 console.log(
                   `GLB model positioned at camera ${glbOriginCameraId}:`,
-                  position.toArray().map((v) => v.toFixed(3))
+                  position.toArray().map((v) => v.toFixed(3)),
                 );
               } else {
                 console.warn("Calibration not found for GLB origin camera");
@@ -638,7 +673,7 @@
             (error) => {
               console.error("Error loading GLB:", error);
               reject(error);
-            }
+            },
           );
         });
       }
@@ -648,7 +683,10 @@
         try {
           const response = await fetch("/api/objects/config");
           objectConfigs = await response.json();
-          console.log("DOPE objects config loaded:", Object.keys(objectConfigs));
+          console.log(
+            "DOPE objects config loaded:",
+            Object.keys(objectConfigs),
+          );
           return objectConfigs;
         } catch (error) {
           console.error("Failed to load DOPE objects config:", error);
@@ -702,7 +740,7 @@
                   objectCentroids[objectName] = center.clone();
                   console.log(
                     `[${objectName}] Model centroid offset:`,
-                    center.toArray().map((v) => v.toFixed(4))
+                    center.toArray().map((v) => v.toFixed(4)),
                   );
 
                   // Initially hidden until we get a pose
@@ -724,31 +762,39 @@
                   objectModels[objectName] = object;
 
                   console.log(
-                    `[${objectName}] OBJ model added to scene (hidden until DOPE detection)`
+                    `[${objectName}] OBJ model added to scene (hidden until DOPE detection)`,
                   );
                   resolve(object);
                 },
                 (progress) => {
                   if (progress.total > 0) {
                     const percent = (progress.loaded / progress.total) * 100;
-                    console.log(`[${objectName}] Loading OBJ: ${percent.toFixed(1)}%`);
+                    console.log(
+                      `[${objectName}] Loading OBJ: ${percent.toFixed(1)}%`,
+                    );
                   }
                 },
                 (error) => {
-                  console.error(`[${objectName}] Error loading OBJ file:`, basePath + objFileName);
+                  console.error(
+                    `[${objectName}] Error loading OBJ file:`,
+                    basePath + objFileName,
+                  );
                   console.error(`[${objectName}] OBJ Error details:`, error);
                   reject(error);
-                }
+                },
               );
             },
             (progress) => {
               // MTL loading progress
             },
             (error) => {
-              console.error(`[${objectName}] Error loading MTL file:`, basePath + mtlFileName);
+              console.error(
+                `[${objectName}] Error loading MTL file:`,
+                basePath + mtlFileName,
+              );
               console.error(`[${objectName}] MTL Error details:`, error);
               reject(error);
-            }
+            },
           );
         });
       }
@@ -756,19 +802,22 @@
       // Load all configured DOPE objects
       async function loadAllDopeObjects() {
         await loadDopeObjectsConfig();
-        
+
         const loadPromises = [];
         for (const [objectName, config] of Object.entries(objectConfigs)) {
           if (config.obj_path) {
             loadPromises.push(
               loadOBJModel(objectName, config.obj_path).catch((error) => {
-                console.warn(`[${objectName}] Failed to load model, continuing:`, error);
+                console.warn(
+                  `[${objectName}] Failed to load model, continuing:`,
+                  error,
+                );
                 return null;
-              })
+              }),
             );
           }
         }
-        
+
         await Promise.all(loadPromises);
         console.log(`Loaded ${Object.keys(objectModels).length} object models`);
       }
@@ -790,15 +839,26 @@
             const model = objectModels[objectName];
             const centroid = objectCentroids[objectName];
             const config = objectConfigs[objectName];
-            
+
             if (!model || !centroid || !config) continue;
+
+            // For "case" object, use first detected position if already stored
+            if (objectName === "case" && firstDetectedPose[objectName]) {
+              model.position.copy(firstDetectedPose[objectName].position);
+              model.quaternion.copy(firstDetectedPose[objectName].quaternion);
+              model.visible = true;
+              detectedCount++;
+              continue;
+            }
 
             if (poseData && poseData.detected) {
               // Get the camera calibration for this object's assigned camera
               const cameraId = poseData.camera_id || config.camera_id;
               const camCalib = calibrationData[cameraId];
               if (!camCalib || !camCalib.extrinsics) {
-                console.warn(`No calibration for camera ${cameraId} (object: ${objectName})`);
+                console.warn(
+                  `No calibration for camera ${cameraId} (object: ${objectName})`,
+                );
                 continue;
               }
 
@@ -823,10 +883,16 @@
                 0,
                 0,
                 0,
-                1
+                1,
               );
-              const camPos = new THREE.Vector3(ext[0][3], -ext[1][3], -ext[2][3]);
-              const camQuat = new THREE.Quaternion().setFromRotationMatrix(camR);
+              const camPos = new THREE.Vector3(
+                ext[0][3],
+                -ext[1][3],
+                -ext[2][3],
+              );
+              const camQuat = new THREE.Quaternion().setFromRotationMatrix(
+                camR,
+              );
 
               // Object pose from DOPE (in camera coordinates)
               const objLocation = poseData.location; // [x, y, z] in meters
@@ -838,7 +904,7 @@
               const objLocalPos = new THREE.Vector3(
                 objLocation[0],
                 -objLocation[1], // Flip Y
-                -objLocation[2] // Flip Z
+                -objLocation[2], // Flip Z
               );
 
               // Transform to world coordinates
@@ -856,7 +922,7 @@
                 objQuaternion[0],
                 -objQuaternion[1], // Flip Y
                 -objQuaternion[2], // Flip Z
-                objQuaternion[3]
+                objQuaternion[3],
               );
 
               // Combine with camera rotation
@@ -867,14 +933,39 @@
               flipY.setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI);
               const flipZ = new THREE.Quaternion();
               flipZ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
-              const finalQuat = worldQuat.clone().multiply(flipY).multiply(flipZ);
+              const finalQuat = worldQuat
+                .clone()
+                .multiply(flipY)
+                .multiply(flipZ);
 
               // Apply pose to model's centroid (not origin)
               // Rotate the centroid offset by the final rotation (including flip)
-              const rotatedCentroid = centroid.clone().applyQuaternion(finalQuat);
+              const rotatedCentroid = centroid
+                .clone()
+                .applyQuaternion(finalQuat);
 
               // Offset position so centroid is at the detected pose
               const modelPos = worldPos.clone().sub(rotatedCentroid);
+
+              // Apply tool-specific offset: move -10cm in global z-axis
+              if (objectName === "tool") {
+                modelPos.y -= 0.08; // -10cm in meters
+              }
+              if (objectName === "case") {
+                modelPos.x += 0.05; // -10cm in meters
+              }
+              // Store first detected pose for "case" object
+              if (objectName === "case" && !firstDetectedPose[objectName]) {
+                firstDetectedPose[objectName] = {
+                  position: modelPos.clone(),
+                  quaternion: finalQuat.clone(),
+                };
+                console.log(
+                  `[${objectName}] First detection stored at:`,
+                  modelPos.toArray().map((v) => v.toFixed(3)),
+                );
+              }
+
               //const modelPos = worldPos.clone();
               // Apply to model - always visible once detected
               model.position.copy(modelPos);
@@ -914,6 +1005,7 @@
           console.log("[Pose] Stopped polling for object poses");
         }
         // Keep models visible at last known position (don't hide them)
+        // Note: firstDetectedPose is NOT reset here so case stays at its position
       }
 
       // ==========================================================
@@ -924,51 +1016,54 @@
       function initVGGTPointCloud() {
         // Create a group to hold the point cloud with transformation
         vggtPointCloudGroup = new THREE.Group();
-        
+
         // Create initial empty point cloud
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
-        geometry.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
-        
+        geometry.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute([], 3),
+        );
+        geometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
+
         const material = new THREE.PointsMaterial({
           size: 0.015,
           vertexColors: true,
-          sizeAttenuation: true
+          sizeAttenuation: true,
         });
-        
+
         vggtPointCloud = new THREE.Points(geometry, material);
         vggtPointCloudGroup.add(vggtPointCloud);
         vggtPointCloudGroup.visible = false;
-        
+
         // Scale the point cloud to match the GLB scene scale
         vggtPointCloudGroup.scale.set(1.4, 1.4, 1.4);
-        
+
         // Position the point cloud group relative to the reference camera (135122071615)
         updateVGGTPointCloudOrigin(VGGT_ORIGIN_CAMERA);
-        
+
         scene.add(vggtPointCloudGroup);
         console.log("[VGGT] Point cloud initialized");
       }
-      
+
       // Update VGGT point cloud position based on selected origin camera
       // This transforms points from VGGT's coordinate system (first camera at origin)
       // to the world coordinate system used by the calibrated cameras
       function updateVGGTPointCloudOrigin(cameraId) {
         if (!vggtPointCloudGroup) return;
-        
+
         const calibration = calibrationData[cameraId];
         if (calibration && calibration.extrinsics) {
           const ext = calibration.extrinsics;
-          
+
           // The extrinsics are camera-to-world transforms (4x4 matrix)
           // They define where the camera is in world coordinates
-          // 
+          //
           // VGGT outputs points in its own coordinate system where the first
           // input camera is at the origin. To align with our world coordinate
           // system, we apply the selected camera's extrinsics.
           //
           // For best alignment, select the first VGGT input camera (135122071615)
-          
+
           // Extract translation and rotation from camera extrinsics
           const t = [ext[0][3], ext[1][3], ext[2][3]];
           const R = [
@@ -976,77 +1071,98 @@
             [ext[1][0], ext[1][1], ext[1][2]],
             [ext[2][0], ext[2][1], ext[2][2]],
           ];
-          
+
           // Convert camera position from OpenCV to Three.js coordinate system
           // OpenCV: X-right, Y-down, Z-forward
           // Three.js: X-right, Y-up, Z-backward
           const position = new THREE.Vector3(t[0], -t[1], -t[2]);
-          
+
           // Convert rotation matrix from OpenCV to Three.js coordinates
           // The conversion flips the Y and Z components of the rotation
           const rotMatrix = new THREE.Matrix4();
           rotMatrix.set(
-            R[0][0], -R[0][1], -R[0][2], 0,
-            -R[1][0], R[1][1], R[1][2], 0,
-            -R[2][0], R[2][1], R[2][2], 0,
-            0, 0, 0, 1
+            R[0][0],
+            -R[0][1],
+            -R[0][2],
+            0,
+            -R[1][0],
+            R[1][1],
+            R[1][2],
+            0,
+            -R[2][0],
+            R[2][1],
+            R[2][2],
+            0,
+            0,
+            0,
+            0,
+            1,
           );
-          
+
           const quaternion = new THREE.Quaternion();
           quaternion.setFromRotationMatrix(rotMatrix);
-          
+
           // Apply transformation to the group
           // This positions the VGGT point cloud in world coordinates
           vggtPointCloudGroup.position.copy(position);
           vggtPointCloudGroup.quaternion.copy(quaternion);
-          
-          console.log(`[VGGT] Point cloud origin set to camera ${cameraId}:`, 
-            position.toArray().map(v => v.toFixed(3)));
+
+          console.log(
+            `[VGGT] Point cloud origin set to camera ${cameraId}:`,
+            position.toArray().map((v) => v.toFixed(3)),
+          );
         } else {
-          console.warn(`[VGGT] No calibration found for camera ${cameraId}, keeping current position`);
+          console.warn(
+            `[VGGT] No calibration found for camera ${cameraId}, keeping current position`,
+          );
         }
       }
 
       // Update VGGT point cloud from server data
       async function updateVGGTPointCloud() {
         if (!vggtEnabled) return;
-        
+
         try {
           const response = await fetch("/api/vggt/pointcloud");
           const data = await response.json();
-          
+
           if (data.success && data.num_points > 0) {
             // Update geometry with new points
             // Convert from VGGT/OpenCV coordinates (X-right, Y-down, Z-forward)
             // to Three.js coordinates (X-right, Y-up, Z-backward)
             const rawPoints = data.points;
             const positions = new Float32Array(rawPoints.length * 3);
-            
+
             for (let i = 0; i < rawPoints.length; i++) {
               const pt = rawPoints[i];
-              positions[i * 3]     = pt[0];      // X stays the same
-              positions[i * 3 + 1] = -pt[1];     // Y is negated (down -> up)
-              positions[i * 3 + 2] = -pt[2];     // Z is negated (forward -> backward)
+              positions[i * 3] = pt[0]; // X stays the same
+              positions[i * 3 + 1] = -pt[1]; // Y is negated (down -> up)
+              positions[i * 3 + 2] = -pt[2]; // Z is negated (forward -> backward)
             }
-            
-            const colors = new Float32Array(data.colors.flat().map(c => c / 255)); // Normalize to 0-1
-            
-            vggtPointCloud.geometry.setAttribute('position', 
-              new THREE.Float32BufferAttribute(positions, 3));
-            vggtPointCloud.geometry.setAttribute('color', 
-              new THREE.Float32BufferAttribute(colors, 3));
+
+            const colors = new Float32Array(
+              data.colors.flat().map((c) => c / 255),
+            ); // Normalize to 0-1
+
+            vggtPointCloud.geometry.setAttribute(
+              "position",
+              new THREE.Float32BufferAttribute(positions, 3),
+            );
+            vggtPointCloud.geometry.setAttribute(
+              "color",
+              new THREE.Float32BufferAttribute(colors, 3),
+            );
             vggtPointCloud.geometry.computeBoundingSphere();
             vggtPointCloudGroup.visible = true;
-            
+
             // Update UI
             vggtPointsEl.textContent = data.num_points.toLocaleString();
             vggtStatusEl.textContent = `${data.num_points.toLocaleString()} pts`;
-            vggtStatusEl.style.color = '#00ff88';
+            vggtStatusEl.style.color = "#00ff88";
             vggtLastPointCount = data.num_points;
-            
           } else if (vggtLastPointCount === 0) {
-            vggtStatusEl.textContent = 'Waiting...';
-            vggtStatusEl.style.color = '#ffaa00';
+            vggtStatusEl.textContent = "Waiting...";
+            vggtStatusEl.style.color = "#ffaa00";
           }
         } catch (error) {
           // Silently handle errors
@@ -1075,30 +1191,30 @@
           const response = await fetch("/api/vggt/enable", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled })
+            body: JSON.stringify({ enabled }),
           });
           const result = await response.json();
-          
+
           if (result.success) {
             vggtEnabled = enabled;
             vggtEnabledCheckbox.checked = enabled;
-            
+
             if (enabled) {
-              vggtStatusEl.textContent = 'Starting...';
-              vggtStatusEl.style.color = '#ffaa00';
+              vggtStatusEl.textContent = "Starting...";
+              vggtStatusEl.style.color = "#ffaa00";
               if (streaming) {
                 startVGGTPolling();
               }
             } else {
-              vggtStatusEl.textContent = 'Off';
-              vggtStatusEl.style.color = '#888';
+              vggtStatusEl.textContent = "Off";
+              vggtStatusEl.style.color = "#888";
               stopVGGTPolling();
               if (vggtPointCloudGroup) {
                 vggtPointCloudGroup.visible = false;
               }
             }
-            
-            console.log(`[VGGT] ${enabled ? 'Enabled' : 'Disabled'}`);
+
+            console.log(`[VGGT] ${enabled ? "Enabled" : "Disabled"}`);
           }
         } catch (error) {
           console.error("[VGGT] Failed to toggle:", error);
@@ -1111,10 +1227,10 @@
           const response = await fetch("/api/vggt/interval", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ interval: parseInt(interval) })
+            body: JSON.stringify({ interval: parseInt(interval) }),
           });
           const result = await response.json();
-          
+
           if (result.success) {
             console.log(`[VGGT] Interval set to ${interval} frames`);
           }
@@ -1128,23 +1244,23 @@
         try {
           const response = await fetch("/api/vggt/status");
           const status = await response.json();
-          
+
           vggtEnabledCheckbox.checked = status.enabled;
           vggtIntervalSelect.value = status.inference_interval.toString();
           vggtEnabled = status.enabled;
-          
+
           if (!status.loaded) {
-            vggtStatusEl.textContent = 'Not loaded';
-            vggtStatusEl.style.color = '#ff5555';
+            vggtStatusEl.textContent = "Not loaded";
+            vggtStatusEl.style.color = "#ff5555";
             vggtEnabledCheckbox.disabled = true;
           } else if (status.enabled) {
-            vggtStatusEl.textContent = 'Active';
-            vggtStatusEl.style.color = '#00ff88';
+            vggtStatusEl.textContent = "Active";
+            vggtStatusEl.style.color = "#00ff88";
           } else {
-            vggtStatusEl.textContent = 'Off';
-            vggtStatusEl.style.color = '#888';
+            vggtStatusEl.textContent = "Off";
+            vggtStatusEl.style.color = "#888";
           }
-          
+
           console.log("[VGGT] Status loaded:", status);
         } catch (error) {
           console.error("[VGGT] Failed to load status:", error);
@@ -1289,7 +1405,7 @@
 
         lineGeometry.setAttribute(
           "position",
-          new THREE.Float32BufferAttribute(linePositions, 3)
+          new THREE.Float32BufferAttribute(linePositions, 3),
         );
         const lineMaterial = new THREE.LineBasicMaterial({
           color: color,
@@ -1333,7 +1449,7 @@
         const position = new THREE.Vector3(
           t[0],
           -t[1], // Flip Y
-          -t[2] // Flip Z
+          -t[2], // Flip Z
         );
 
         // Use rotation from extrinsics
@@ -1355,7 +1471,7 @@
           0,
           0,
           0,
-          1
+          1,
         );
         const quaternion = new THREE.Quaternion();
         quaternion.setFromRotationMatrix(rotMatrix);
@@ -1374,7 +1490,7 @@
 
         console.log(
           `Camera ${cameraId} (#${calibration.number}) pos:`,
-          position.toArray().map((v) => v.toFixed(3))
+          position.toArray().map((v) => v.toFixed(3)),
         );
       }
 
@@ -1457,7 +1573,7 @@
 
         // Start pose polling for real-time tool position updates
         startPosePolling();
-        
+
         // Start VGGT polling if enabled
         if (vggtEnabled) {
           startVGGTPolling();
@@ -1509,7 +1625,7 @@
 
         // Stop pose polling
         stopPosePolling();
-        
+
         // Stop VGGT polling
         stopVGGTPolling();
 
@@ -1557,12 +1673,15 @@
         try {
           await loadAllDopeObjects();
         } catch (error) {
-          console.error("Failed to load DOPE object models, continuing anyway:", error);
+          console.error(
+            "Failed to load DOPE object models, continuing anyway:",
+            error,
+          );
         }
-        
+
         // Initialize VGGT point cloud visualization
         initVGGTPointCloud();
-        
+
         // Load VGGT status from server
         await loadVGGTStatus();
 
@@ -1594,12 +1713,12 @@
             startStreaming();
           }
         });
-        
+
         // VGGT event listeners
         vggtEnabledCheckbox.addEventListener("change", (e) => {
           setVGGTEnabled(e.target.checked);
         });
-        
+
         vggtIntervalSelect.addEventListener("change", (e) => {
           setVGGTInterval(e.target.value);
         });

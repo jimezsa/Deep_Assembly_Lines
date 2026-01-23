@@ -565,14 +565,23 @@ class ObjectDetector(object):
         obj_name = pnp_solver.object_name
 
         #print("find_object_poses:  found {} objects ================".format(len(objects)))
+        # Minimum number of points required for PnP (excluding centroid)
+        MIN_POINTS_FOR_PNP = 4
+        
         for obj in objects:
             # Run PNP
             points = obj[1] + [(obj[0][0] * scale_factor, obj[0][1] * scale_factor)]
-            if None in points:
-                print("Incomplete cuboid detection.")
+            
+            # Count valid (non-None) vertex points (excluding the centroid which is always valid)
+            valid_vertex_count = sum(1 for p in obj[1] if p is not None)
+            
+            if valid_vertex_count < MIN_POINTS_FOR_PNP:
+                print(f"Incomplete cuboid detection: only {valid_vertex_count}/{len(obj[1])} vertices detected (minimum {MIN_POINTS_FOR_PNP} required).")
                 print("  result from detection:", points)
                 print("Skipping.")
                 continue
+            elif None in points:
+                print(f"Partial cuboid detection: {valid_vertex_count}/{len(obj[1])} vertices detected. Running PnP with available points.")
 
             cuboid2d = np.copy(points)
             location, quaternion, projected_points = pnp_solver.solve_pnp(points)

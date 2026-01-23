@@ -181,6 +181,7 @@ class DOPEDetector:
         
         # Convert BGR to RGB (faster than [..., ::-1].copy())
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        #frame_rgb = frame
         
         # Resize if needed
         if target_size is not None:
