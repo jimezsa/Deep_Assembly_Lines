@@ -388,6 +388,23 @@
         </button>
       </div>
 
+      <!-- GLB Scene Controls -->
+      <div class="panel-title" style="margin-top: 15px">GLB Scene Model</div>
+      <div class="control-row">
+        <label class="control-label" for="glbEnabled" style="cursor: pointer">
+          <input
+            type="checkbox"
+            id="glbEnabled"
+            checked
+            style="margin-right: 8px; cursor: pointer"
+          />
+          Show GLB Scene
+        </label>
+        <span class="control-value" id="glbStatus" style="color: #00ff88"
+          >Visible</span
+        >
+      </div>
+
       <!-- VGGT Controls -->
       <div class="panel-title" style="margin-top: 15px">VGGT Point Cloud</div>
       <div class="control-row">
@@ -488,6 +505,10 @@
       // First detection tracking - store first detected position for "case" object
       let firstDetectedPose = {}; // object_name -> {position: THREE.Vector3, quaternion: THREE.Quaternion}
 
+      // GLB scene model state
+      let glbSceneModel = null; // THREE.Object3D for the loaded GLB scene
+      let glbVisible = true;
+
       // VGGT point cloud state
       let vggtEnabled = false;
       let vggtPointCloud = null; // THREE.Points object
@@ -504,6 +525,10 @@
       const cameraCountEl = document.getElementById("cameraCount");
       const cameraListEl = document.getElementById("cameraList");
       const startBtn = document.getElementById("startBtn");
+
+      // GLB DOM elements
+      const glbEnabledCheckbox = document.getElementById("glbEnabled");
+      const glbStatusEl = document.getElementById("glbStatus");
 
       // VGGT DOM elements
       const vggtEnabledCheckbox = document.getElementById("vggtEnabled");
@@ -663,6 +688,11 @@
               }
 
               scene.add(model);
+              
+              // Store reference for visibility control
+              glbSceneModel = model;
+              glbSceneModel.visible = glbVisible;
+              
               console.log("GLB model added to scene");
               resolve(model);
             },
@@ -952,7 +982,8 @@
                 modelPos.y -= 0.08; // -10cm in meters
               }
               if (objectName === "case") {
-                modelPos.x += 0.05; // -10cm in meters
+                modelPos.z -= 0.04; // -4cm in meters
+                modelPos.x += 0.05; // 5cm in meters
               }
               // Store first detected pose for "case" object
               if (objectName === "case" && !firstDetectedPose[objectName]) {
@@ -1026,7 +1057,7 @@
         geometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
 
         const material = new THREE.PointsMaterial({
-          size: 0.015,
+          size: 0.010,
           vertexColors: true,
           sizeAttenuation: true,
         });
@@ -1711,6 +1742,17 @@
             stopStreaming();
           } else {
             startStreaming();
+          }
+        });
+
+        // GLB event listener
+        glbEnabledCheckbox.addEventListener("change", (e) => {
+          glbVisible = e.target.checked;
+          if (glbSceneModel) {
+            glbSceneModel.visible = glbVisible;
+            glbStatusEl.textContent = glbVisible ? "Visible" : "Hidden";
+            glbStatusEl.style.color = glbVisible ? "#00ff88" : "#888";
+            console.log(`[GLB] Scene ${glbVisible ? "shown" : "hidden"}`);
           }
         });
 

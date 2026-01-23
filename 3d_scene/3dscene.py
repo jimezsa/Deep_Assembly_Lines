@@ -57,16 +57,12 @@ DOPE_OBJECTS = {
 # VGGT configuration - 3D point cloud reconstruction from multi-view cameras
 VGGT_WEIGHTS_PATH = "weights/vggt.pt"
 VGGT_CONF_THRESHOLD_PCT = 60.0  # Filter out bottom 50% low-confidence points
-VGGT_MAX_POINTS = 50000
+VGGT_MAX_POINTS = 100000
 # Camera IDs used for VGGT inference (order matters - matches the 7 input frames)
 VGGT_CAMERA_IDS = [
     "135122071615",
-    "137322071489",
-    "141722071426",
-    "141722073953",
-    "141722075184",
     "141722079467",
-    "142122070087"
+    #"137322071489",
 ]
 
 # =============================================================================
@@ -671,7 +667,7 @@ def init_sync_manager():
         valid_vggt_cameras = [cam_id for cam_id in VGGT_CAMERA_IDS 
                              if cam_id in sync_manager.cameras]
         if len(valid_vggt_cameras) == len(VGGT_CAMERA_IDS):
-            sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=6)
+            sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=20)
         else:
             print(f"[VGGT] Warning: Not all VGGT cameras available. Need: {VGGT_CAMERA_IDS}, Have: {list(sync_manager.cameras.keys())}")
     
