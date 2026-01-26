@@ -8,6 +8,9 @@ matplotlib>=3.7.0
 pillow>=10.0.0
 pyrr==0.10.3
 
+# Tracking dependencies (BoT-SORT)
+lap>=0.5.0  # Linear Assignment Problem solver for BoT-SORT tracking
+
 # vggt
 huggingface_hub
 einops
