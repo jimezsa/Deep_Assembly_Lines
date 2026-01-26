@@ -44,11 +44,10 @@ conda install pytorch torchvision torchaudio cpuonly -c pytorch -y
 **For NVIDIA GPU (CUDA):**
 
 ```bash
-# CUDA 11.8
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
 
-# OR CUDA 12.1
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia -y
+# OR CUDA 12.1, use this
+conda activate HAUP && pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
 ```
 
 ### Step 3: Install Project Dependencies
@@ -58,6 +57,7 @@ Navigate to the yolov11_finetuned directory and install requirements:
 ```bash
 cd yolov11_finetuned
 python -m pip install -r requirements.txt
+python -m pip install -r requirements_webrtc.txt
 ```
 
 ### Step 4: Verify Installation

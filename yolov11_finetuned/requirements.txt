@@ -6,6 +6,19 @@ torch>=2.0.0
 torchvision>=0.15.0
 matplotlib>=3.7.0
 pillow>=10.0.0
+pyrr==0.10.3
+
+# Tracking dependencies (BoT-SORT)
+lap>=0.5.0  # Linear Assignment Problem solver for BoT-SORT tracking
+
+# vggt
+huggingface_hub
+einops
+safetensors
+
+#ply plot for vggt notebook demo
+plotly>=5.0.0
+
 
 # For Jupyter notebooks
 ipykernel>=6.25.0

@@ -284,7 +284,7 @@ async def on_shutdown(app):
         video_track.stop()
 
 
-async def run_server(host="0.0.0.0", port=8080):
+async def run_server(host="0.0.0.0", port=8085):
     """Run WebRTC server."""
     app = web.Application()
     app.router.add_get("/", index)
@@ -328,7 +328,7 @@ def main():
         print("WARNING: CUDA not available, using CPU")
     
     # Load model (prefer TensorRT engine, but use .pt if on MacOS with MPS)
-    engine_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.engine')
+    engine_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
     pt_path = os.path.join('runs', 'segment', 'yolov11n_seg_custom', 'weights', 'best.pt')
 
     import platform
