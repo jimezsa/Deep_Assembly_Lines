@@ -38,7 +38,7 @@ class VGGTDetector:
     - Efficient numpy operations for post-processing
     """
     
-    def __init__(self, weights_path="weights/vggt.pt", conf_threshold_pct=50.0, max_points=50000):
+    def __init__(self, weights_path="weights/vggt.pt", conf_threshold_pct=50.0, max_points=100000):
         """Initialize the VGGT detector.
         
         Args:

@@ -61,14 +61,17 @@ DOPE_OBJECTS = {
 
 # VGGT configuration - 3D point cloud reconstruction from multi-view cameras
 VGGT_WEIGHTS_PATH = "weights/vggt.pt"
-VGGT_CONF_THRESHOLD_PCT = 60.0  # Filter out bottom 50% low-confidence points
+VGGT_CONF_THRESHOLD_PCT = 30.0  # Filter out bottom 50% low-confidence points
 VGGT_MAX_POINTS = 100000
 # Camera IDs used for VGGT inference (order matters - matches the 7 input frames)
 VGGT_CAMERA_IDS = [
-    "137322071489",
     "135122071615",
+    "137322071489",
+    "141722071426",
+    "141722073953",
+    "141722075184",
     "141722079467",
-    "142122070087",
+    "142122070087"
 ]
 
 # =============================================================================
