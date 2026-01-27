@@ -405,6 +405,31 @@
         >
       </div>
 
+      <!-- Human Pose Controls -->
+      <div class="panel-title" style="margin-top: 15px">Human Pose (3D)</div>
+      <div class="control-row">
+        <label class="control-label" for="poseEnabled" style="cursor: pointer">
+          <input
+            type="checkbox"
+            id="poseEnabled"
+            checked
+            style="margin-right: 8px; cursor: pointer"
+          />
+          Enable Pose
+        </label>
+        <span class="control-value" id="poseStatus" style="color: #00ff88"
+          >Active</span
+        >
+      </div>
+      <div class="control-row">
+        <span class="control-label">Persons</span>
+        <span class="control-value" id="posePersons">0</span>
+      </div>
+      <div class="control-row">
+        <span class="control-label">Keypoints</span>
+        <span class="control-value" id="poseKeypoints">0/17</span>
+      </div>
+
       <!-- VGGT Controls -->
       <div class="panel-title" style="margin-top: 15px">VGGT Point Cloud</div>
       <div class="control-row">
@@ -521,6 +546,91 @@
       let vggtLastPointCount = 0;
       const VGGT_ORIGIN_CAMERA = "135122071615"; // Reference camera for VGGT point cloud (first VGGT input camera)
 
+      // Human Pose state
+      let humanPoseEnabled = true;
+      let poseSkeletonGroup = null; // Group to hold 3D skeleton
+      let humanPosePollingInterval = null;
+      let currentPose3D = null; // Current 3D pose data
+      let current2DPoses = {}; // camera_id -> list of 2D poses
+
+      // Skeleton visualization constants
+      const SKELETON_CONNECTIONS = [
+        [0, 1],
+        [0, 2],
+        [1, 3],
+        [2, 4], // Face
+        [5, 6],
+        [5, 7],
+        [7, 9],
+        [6, 8],
+        [8, 10], // Arms
+        [5, 11],
+        [6, 12],
+        [11, 12], // Torso
+        [11, 13],
+        [13, 15],
+        [12, 14],
+        [14, 16], // Legs
+      ];
+
+      const KEYPOINT_NAMES = [
+        "nose",
+        "left_eye",
+        "right_eye",
+        "left_ear",
+        "right_ear",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+      ];
+
+      // Skeleton colors (matching Python side)
+      const BONE_COLORS = {
+        face: 0x00d4ff, // Cyan
+        left_arm: 0x00ff88, // Green
+        right_arm: 0xff5555, // Red
+        torso: 0xffff55, // Yellow
+        left_leg: 0x00ffff, // Cyan
+        right_leg: 0xff00ff, // Magenta
+      };
+
+      // Map bone indices to color groups
+      function getBoneColor(i, j) {
+        if (
+          (i === 0 && j === 1) ||
+          (i === 0 && j === 2) ||
+          (i === 1 && j === 3) ||
+          (i === 2 && j === 4)
+        ) {
+          return BONE_COLORS.face;
+        } else if ((i === 5 && j === 7) || (i === 7 && j === 9)) {
+          return BONE_COLORS.left_arm;
+        } else if ((i === 6 && j === 8) || (i === 8 && j === 10)) {
+          return BONE_COLORS.right_arm;
+        } else if (
+          (i === 5 && j === 6) ||
+          (i === 5 && j === 11) ||
+          (i === 6 && j === 12) ||
+          (i === 11 && j === 12)
+        ) {
+          return BONE_COLORS.torso;
+        } else if ((i === 11 && j === 13) || (i === 13 && j === 15)) {
+          return BONE_COLORS.left_leg;
+        } else if ((i === 12 && j === 14) || (i === 14 && j === 16)) {
+          return BONE_COLORS.right_leg;
+        }
+        return 0xffffff;
+      }
+
       // DOM elements
       const container = document.getElementById("canvas-container");
       const loadingOverlay = document.getElementById("loading");
@@ -539,6 +649,12 @@
       const vggtIntervalSelect = document.getElementById("vggtInterval");
       const vggtStatusEl = document.getElementById("vggtStatus");
       const vggtPointsEl = document.getElementById("vggtPoints");
+
+      // Pose DOM elements
+      const poseEnabledCheckbox = document.getElementById("poseEnabled");
+      const poseStatusEl = document.getElementById("poseStatus");
+      const posePersonsEl = document.getElementById("posePersons");
+      const poseKeypointsEl = document.getElementById("poseKeypoints");
 
       // Initialize Three.js scene
       function initScene() {
@@ -692,11 +808,11 @@
               }
 
               scene.add(model);
-              
+
               // Store reference for visibility control
               glbSceneModel = model;
               glbSceneModel.visible = glbVisible;
-              
+
               console.log("GLB model added to scene");
               resolve(model);
             },
@@ -1061,7 +1177,7 @@
         geometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
 
         const material = new THREE.PointsMaterial({
-          size: 0.010,
+          size: 0.01,
           vertexColors: true,
           sizeAttenuation: true,
         });
@@ -1156,7 +1272,7 @@
       // VGGT optimization: track last version to avoid redundant updates
       let vggtLastVersion = -1; // Start at -1 to ensure first fetch always happens
       let vggtUpdateInProgress = false;
-      
+
       // Pre-allocated buffers for point cloud (reused across updates)
       let vggtPositionBuffer = null;
       let vggtColorBuffer = null;
@@ -1167,35 +1283,39 @@
         if (!vggtEnabled || vggtUpdateInProgress) {
           return;
         }
-        
+
         vggtUpdateInProgress = true;
 
         try {
           // Fetch binary data directly (skip version check for simplicity and reliability)
           const response = await fetch("/api/vggt/pointcloud/binary");
-          
+
           if (!response.ok) {
-            console.error("[VGGT] Fetch failed:", response.status, response.statusText);
+            console.error(
+              "[VGGT] Fetch failed:",
+              response.status,
+              response.statusText,
+            );
             vggtUpdateInProgress = false;
             return;
           }
-          
+
           const buffer = await response.arrayBuffer();
           console.log("[VGGT] Received buffer:", buffer.byteLength, "bytes");
-          
+
           // Check minimum size for header
           if (buffer.byteLength < 12) {
             console.log("[VGGT] Buffer too small, skipping");
             vggtUpdateInProgress = false;
             return;
           }
-          
+
           // Parse header (12 bytes: num_points, version, inference_time_ms)
           const header = new Uint32Array(buffer, 0, 3);
           const numPoints = header[0];
           const version = header[1];
           const inferenceTimeMs = header[2];
-          
+
           // Skip if no points or same version
           if (numPoints === 0) {
             vggtStatusEl.textContent = "Waiting...";
@@ -1203,59 +1323,65 @@
             vggtUpdateInProgress = false;
             return;
           }
-          
+
           // Skip if version hasn't changed
           if (version === vggtLastVersion) {
             vggtUpdateInProgress = false;
             return;
           }
-          
+
           // Verify buffer size
-          const expectedSize = 12 + (numPoints * 3 * 4) + (numPoints * 3);
+          const expectedSize = 12 + numPoints * 3 * 4 + numPoints * 3;
           if (buffer.byteLength < expectedSize) {
-            console.error("[VGGT] Buffer too small:", buffer.byteLength, "expected:", expectedSize);
+            console.error(
+              "[VGGT] Buffer too small:",
+              buffer.byteLength,
+              "expected:",
+              expectedSize,
+            );
             vggtUpdateInProgress = false;
             return;
           }
-          
+
           // Parse points (float32 x, y, z for each point)
           const pointsOffset = 12; // After header
           const pointsBytes = numPoints * 3 * 4; // 3 floats * 4 bytes each
-          const rawPoints = new Float32Array(buffer, pointsOffset, numPoints * 3);
-          
+          const rawPoints = new Float32Array(
+            buffer,
+            pointsOffset,
+            numPoints * 3,
+          );
+
           // Parse colors (uint8 r, g, b for each point)
           const colorsOffset = pointsOffset + pointsBytes;
           const rawColors = new Uint8Array(buffer, colorsOffset, numPoints * 3);
-          
+
           // Allocate output buffers
           const positions = new Float32Array(numPoints * 3);
           const colors = new Float32Array(numPoints * 3);
-          
+
           // Convert coordinates: VGGT (X-right, Y-down, Z-forward) -> Three.js (X-right, Y-up, Z-backward)
           // And convert colors to 0-1 range
           for (let i = 0; i < numPoints; i++) {
             const i3 = i * 3;
-            positions[i3] = rawPoints[i3];           // X stays
-            positions[i3 + 1] = -rawPoints[i3 + 1];  // Y negated
-            positions[i3 + 2] = -rawPoints[i3 + 2];  // Z negated
-            
+            positions[i3] = rawPoints[i3]; // X stays
+            positions[i3 + 1] = -rawPoints[i3 + 1]; // Y negated
+            positions[i3 + 2] = -rawPoints[i3 + 2]; // Z negated
+
             colors[i3] = rawColors[i3] / 255;
             colors[i3 + 1] = rawColors[i3 + 1] / 255;
             colors[i3 + 2] = rawColors[i3 + 2] / 255;
           }
-          
+
           // Update geometry
           const geometry = vggtPointCloud.geometry;
-          
+
           geometry.setAttribute(
             "position",
             new THREE.BufferAttribute(positions, 3),
           );
-          geometry.setAttribute(
-            "color", 
-            new THREE.BufferAttribute(colors, 3),
-          );
-          
+          geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
           geometry.computeBoundingSphere();
           vggtPointCloudGroup.visible = true;
 
@@ -1265,13 +1391,14 @@
           vggtStatusEl.style.color = "#00ff88";
           vggtLastPointCount = numPoints;
           vggtLastVersion = version;
-          
-          console.log(`[VGGT] Updated: ${numPoints} points, v${version}, ${inferenceTimeMs}ms`);
-          
+
+          console.log(
+            `[VGGT] Updated: ${numPoints} points, v${version}, ${inferenceTimeMs}ms`,
+          );
         } catch (error) {
           console.error("[VGGT] Update error:", error);
         }
-        
+
         vggtUpdateInProgress = false;
       }
 
@@ -1280,7 +1407,9 @@
         if (vggtPollingInterval) return;
         // Poll every 500ms for reliability
         vggtPollingInterval = setInterval(updateVGGTPointCloud, 500);
-        console.log("[VGGT] Started polling for point cloud (binary mode, 500ms interval)");
+        console.log(
+          "[VGGT] Started polling for point cloud (binary mode, 500ms interval)",
+        );
         // Also do an immediate update
         updateVGGTPointCloud();
       }
@@ -1373,6 +1502,241 @@
           console.log("[VGGT] Status loaded:", status);
         } catch (error) {
           console.error("[VGGT] Failed to load status:", error);
+        }
+      }
+
+      // ==========================================================
+      // Human Pose 3D Functions
+      // ==========================================================
+
+      // Initialize 3D skeleton visualization group
+      function initPoseSkeleton() {
+        poseSkeletonGroup = new THREE.Group();
+        poseSkeletonGroup.visible = poseEnabled;
+        scene.add(poseSkeletonGroup);
+        console.log("[Pose] 3D skeleton group initialized");
+      }
+
+      // Update 3D skeleton from server pose data
+      async function updatePoseSkeleton() {
+        if (!humanPoseEnabled) return;
+
+        try {
+          const response = await fetch("/api/pose/3d");
+          const data = await response.json();
+
+          if (!data.success || !data.poses || data.poses.length === 0) {
+            posePersonsEl.textContent = "0";
+            poseKeypointsEl.textContent = "0/17";
+            poseStatusEl.textContent = "Waiting...";
+            poseStatusEl.style.color = "#ffaa00";
+            return;
+          }
+
+          // Update UI
+          posePersonsEl.textContent = data.num_persons.toString();
+          poseStatusEl.textContent = "Active";
+          poseStatusEl.style.color = "#00ff88";
+
+          // Clear previous skeleton
+          while (poseSkeletonGroup.children.length > 0) {
+            const child = poseSkeletonGroup.children[0];
+            poseSkeletonGroup.remove(child);
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) child.material.dispose();
+          }
+
+          // Draw each person's skeleton
+          for (const pose of data.poses) {
+            if (!pose.detected) continue;
+
+            const keypoints = pose.keypoints_3d;
+            const confidences = pose.confidences;
+            const numViews = pose.num_views;
+
+            // Count valid keypoints
+            let validCount = 0;
+            for (let i = 0; i < 17; i++) {
+              if (numViews[i] >= 2 && confidences[i] > 0.3) {
+                validCount++;
+              }
+            }
+            poseKeypointsEl.textContent = `${validCount}/17`;
+
+            // Draw skeleton bones using cylinder meshes for better visibility
+            const boneRadius = 0.012; // Thick bones for visibility
+            
+            for (const [i, j] of SKELETON_CONNECTIONS) {
+              // Check if both keypoints are valid
+              if (
+                numViews[i] >= 2 &&
+                numViews[j] >= 2 &&
+                confidences[i] > 0.3 &&
+                confidences[j] > 0.3
+              ) {
+                // Get 3D points (convert from OpenCV to Three.js coordinates)
+                // OpenCV: X-right, Y-down, Z-forward
+                // Three.js: X-right, Y-up, Z-backward
+                const p1 = new THREE.Vector3(
+                  keypoints[i][0],
+                  -keypoints[i][1], // Flip Y
+                  -keypoints[i][2], // Flip Z
+                );
+                const p2 = new THREE.Vector3(
+                  keypoints[j][0],
+                  -keypoints[j][1],
+                  -keypoints[j][2],
+                );
+
+                // Create cylinder bone between two points
+                const direction = new THREE.Vector3().subVectors(p2, p1);
+                const length = direction.length();
+                
+                if (length > 0.001) {  // Avoid zero-length bones
+                  const color = getBoneColor(i, j);
+                  
+                  // Create cylinder geometry
+                  const boneGeometry = new THREE.CylinderGeometry(
+                    boneRadius, boneRadius, length, 6, 1
+                  );
+                  const boneMaterial = new THREE.MeshBasicMaterial({
+                    color: color,
+                    opacity: 0.95,
+                    transparent: true,
+                  });
+                  const bone = new THREE.Mesh(boneGeometry, boneMaterial);
+                  
+                  // Position at midpoint
+                  bone.position.copy(p1).add(p2).multiplyScalar(0.5);
+                  
+                  // Orient cylinder to point from p1 to p2
+                  bone.quaternion.setFromUnitVectors(
+                    new THREE.Vector3(0, 1, 0),  // Cylinder default orientation
+                    direction.clone().normalize()
+                  );
+                  
+                  poseSkeletonGroup.add(bone);
+                }
+              }
+            }
+
+            // Draw keypoint spheres (larger for visibility)
+            for (let i = 0; i < 17; i++) {
+              if (numViews[i] >= 2 && confidences[i] > 0.3) {
+                const sphereGeometry = new THREE.SphereGeometry(0.025, 12, 12);
+                const sphereMaterial = new THREE.MeshBasicMaterial({
+                  color: 0x00ffff,  // Cyan for visibility
+                  opacity: 1.0,
+                });
+                const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+                sphere.position.set(
+                  keypoints[i][0],
+                  -keypoints[i][1],
+                  -keypoints[i][2],
+                );
+                poseSkeletonGroup.add(sphere);
+              }
+            }
+          }
+
+          poseSkeletonGroup.visible = true;
+        } catch (error) {
+          console.error("[Pose] Error updating skeleton:", error);
+        }
+      }
+
+      // Start polling for human pose 3D skeleton updates
+      function startHumanPosePolling() {
+        if (humanPosePollingInterval) return;
+        humanPosePollingInterval = setInterval(updatePoseSkeleton, 100); // Poll every 100ms
+        console.log("[Pose] Started polling for 3D skeleton");
+        updatePoseSkeleton();
+      }
+
+      // Stop polling for human pose 3D skeleton updates
+      function stopHumanPosePolling() {
+        if (humanPosePollingInterval) {
+          clearInterval(humanPosePollingInterval);
+          humanPosePollingInterval = null;
+          console.log("[Pose] Stopped polling for 3D skeleton");
+        }
+      }
+
+      // Toggle human pose enabled state
+      async function setHumanPoseEnabled(enabled) {
+        try {
+          const response = await fetch("/api/pose/enable", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled }),
+          });
+          const result = await response.json();
+
+          if (result.success) {
+            humanPoseEnabled = enabled;
+            poseEnabledCheckbox.checked = enabled;
+
+            if (enabled) {
+              poseStatusEl.textContent = "Starting...";
+              poseStatusEl.style.color = "#ffaa00";
+              if (streaming) {
+                startHumanPosePolling();
+              }
+              if (poseSkeletonGroup) {
+                poseSkeletonGroup.visible = true;
+              }
+            } else {
+              poseStatusEl.textContent = "Off";
+              poseStatusEl.style.color = "#888";
+              stopHumanPosePolling();
+              if (poseSkeletonGroup) {
+                poseSkeletonGroup.visible = false;
+              }
+            }
+
+            console.log(`[Pose] ${enabled ? "Enabled" : "Disabled"}`);
+          }
+        } catch (error) {
+          console.error("[Pose] Failed to toggle:", error);
+        }
+      }
+
+      // Load pose status from server
+      async function loadPoseStatus() {
+        try {
+          const response = await fetch("/api/pose/status");
+          if (!response.ok) {
+            console.warn("[Pose] API not available, pose disabled");
+            poseStatusEl.textContent = "Not available";
+            poseStatusEl.style.color = "#888";
+            poseEnabledCheckbox.disabled = true;
+            humanPoseEnabled = false;
+            return;
+          }
+          const status = await response.json();
+
+          poseEnabledCheckbox.checked = status.enabled;
+          humanPoseEnabled = status.enabled;
+
+          if (!status.loaded) {
+            poseStatusEl.textContent = "Not loaded";
+            poseStatusEl.style.color = "#ff5555";
+            poseEnabledCheckbox.disabled = true;
+          } else if (status.enabled) {
+            poseStatusEl.textContent = "Active";
+            poseStatusEl.style.color = "#00ff88";
+          } else {
+            poseStatusEl.textContent = "Off";
+            poseStatusEl.style.color = "#888";
+          }
+
+          console.log("[Pose] Status loaded:", status);
+        } catch (error) {
+          console.error("[Pose] Failed to load status:", error);
+          poseStatusEl.textContent = "Error";
+          poseStatusEl.style.color = "#ff5555";
+          poseEnabledCheckbox.disabled = true;
+          humanPoseEnabled = false;
         }
       }
 
@@ -1680,12 +2044,17 @@
 
         streaming = true;
 
-        // Start pose polling for real-time tool position updates
+        // Start pose polling for real-time tool position updates (DOPE objects)
         startPosePolling();
 
         // Start VGGT polling if enabled
         if (vggtEnabled) {
           startVGGTPolling();
+        }
+
+        // Start human pose 3D skeleton polling if enabled
+        if (humanPoseEnabled) {
+          startHumanPosePolling();
         }
 
         Object.keys(cameraPlanes).forEach((cameraId) => {
@@ -1732,11 +2101,14 @@
       async function stopStreaming() {
         streaming = false;
 
-        // Stop pose polling
+        // Stop DOPE object pose polling
         stopPosePolling();
 
         // Stop VGGT polling
         stopVGGTPolling();
+
+        // Stop human pose polling
+        stopHumanPosePolling();
 
         // Tell the server to stop processing frames
         try {
@@ -1794,6 +2166,12 @@
         // Load VGGT status from server
         await loadVGGTStatus();
 
+        // Initialize human pose 3D skeleton
+        initPoseSkeleton();
+
+        // Load pose status from server
+        await loadPoseStatus();
+
         // Create camera planes and frustums
         availableCameras.forEach((cameraId, index) => {
           // Create plane with video texture
@@ -1841,6 +2219,11 @@
 
         vggtIntervalSelect.addEventListener("change", (e) => {
           setVGGTInterval(e.target.value);
+        });
+
+        // Human Pose event listeners
+        poseEnabledCheckbox.addEventListener("change", (e) => {
+          setHumanPoseEnabled(e.target.checked);
         });
 
         // Hide loading overlay

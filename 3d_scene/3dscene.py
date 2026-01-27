@@ -13,6 +13,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dope_inference import load_dope_detector, create_empty_pose
 from yolo_inference import load_yolo_model, YOLODetector
 from vggt_inference import load_vggt_detector, create_empty_point_cloud
+from pose_inference import (
+    load_pose_model, create_pose_estimator, HumanPoseEstimator,
+    create_empty_3d_pose, pose_3d_to_dict, poses_2d_to_dict,
+    KEYPOINT_NAMES, SKELETON_CONNECTIONS
+)
 
 # Try to import orjson for faster JSON serialization
 try:
@@ -96,6 +101,13 @@ vggt_enabled = False  # Whether VGGT inference is enabled (can be toggled from U
 current_point_cloud = None  # Current point cloud data
 point_cloud_lock = threading.Lock()
 
+# 3D Human Pose estimation state
+pose_estimator = None  # HumanPoseEstimator instance
+pose_enabled = True  # Whether pose estimation is enabled
+current_3d_poses = []  # List of current 3D poses
+current_2d_poses = {}  # Dict of camera_id -> list of 2D poses
+pose_data_lock = threading.Lock()
+
 
 # =============================================================================
 # Video Manager
@@ -137,6 +149,14 @@ class SyncedVideoManager:
         self.vggt_enabled = False  # Toggle for VGGT inference
         self.cached_vggt_result = None  # Cached point cloud result
         
+        # 3D Pose estimation state
+        self.pose_estimator = None  # HumanPoseEstimator instance
+        self.pose_inference_interval = 2  # Run pose every N frames
+        self.pose_inference_counter = 0
+        self.pose_enabled = True  # Toggle for pose estimation
+        self.cached_2d_poses = {}  # camera_id -> list of Pose2D
+        self.cached_3d_poses = []  # list of Pose3D
+        
         # FPS tracking (simplified)
         self.fps_start_time = time.perf_counter()
         self.fps_frame_count = 0
@@ -162,13 +182,18 @@ class SyncedVideoManager:
         fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
+        # Get original frame dimensions for pose scaling
+        orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
         self.cameras[camera_id] = {
             'cap': cap,
             'video_path': video_path,
             'total_frames': total_frames,
             'fps': fps,
             'cached_jpeg': None,
-            'frame_buffer': None  # Pre-allocated frame storage
+            'frame_buffer': None,  # Pre-allocated frame storage
+            'orig_dims': (orig_height, orig_width)  # Original frame dimensions (H, W)
         }
         self.camera_ids_list.append(camera_id)
         
@@ -246,9 +271,38 @@ class SyncedVideoManager:
         self.vggt_inference_interval = max(1, interval)
         print(f"[VGGT] Inference interval set to every {self.vggt_inference_interval} frames")
     
+    def set_pose_estimator(self, estimator, inference_interval=2):
+        """Set pose estimator for 3D human pose estimation.
+        
+        Args:
+            estimator: HumanPoseEstimator instance
+            inference_interval: Run pose estimation every N frames
+        """
+        self.pose_estimator = estimator
+        self.pose_inference_interval = inference_interval
+        print(f"[Pose] Enabled on all cameras (every {inference_interval} frames)")
+    
+    def set_pose_enabled(self, enabled):
+        """Enable or disable pose estimation.
+        
+        Args:
+            enabled: Boolean to enable/disable pose estimation
+        """
+        self.pose_enabled = enabled
+        print(f"[Pose] {'Enabled' if enabled else 'Disabled'}")
+    
+    def set_pose_interval(self, interval):
+        """Set how often pose inference runs.
+        
+        Args:
+            interval: Run pose every N frames
+        """
+        self.pose_inference_interval = max(1, interval)
+        print(f"[Pose] Inference interval set to every {self.pose_inference_interval} frames")
+    
     def reset_playback(self):
         """Reset playback to the beginning."""
-        global current_object_poses, current_point_cloud, first_detection_flags
+        global current_object_poses, current_point_cloud, first_detection_flags, current_3d_poses, current_2d_poses
         with self.lock:
             self.current_frame = 0
             self.yolo_inference_counter = 0
@@ -257,6 +311,9 @@ class SyncedVideoManager:
             self.cached_dope_results = {}
             self.vggt_inference_counter = 0
             self.cached_vggt_result = None
+            self.pose_inference_counter = 0
+            self.cached_2d_poses = {}
+            self.cached_3d_poses = []
             self.fps_start_time = time.perf_counter()
             self.fps_frame_count = 0
             
@@ -271,6 +328,11 @@ class SyncedVideoManager:
             with point_cloud_lock:
                 current_point_cloud = None
             
+            # Reset human poses
+            with pose_data_lock:
+                current_3d_poses = []
+                current_2d_poses = {}
+            
             # Seek all cameras to frame 0 (only time we seek)
             for cam_data in self.cameras.values():
                 cam_data['cap'].set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -278,13 +340,14 @@ class SyncedVideoManager:
             
             print("[SyncManager] Playback reset to frame 0")
     
-    def _process_camera(self, camera_id, run_inference, collect_raw_for_vggt=False):
+    def _process_camera(self, camera_id, run_inference, collect_raw_for_vggt=False, collect_raw_for_pose=False):
         """Process a single camera frame (for parallel execution).
         
         Args:
             camera_id: Camera ID to process
             run_inference: Tuple of (run_yolo, run_dope) booleans
             collect_raw_for_vggt: If True, also return raw frame for VGGT
+            collect_raw_for_pose: If True, also return raw frame for pose estimation
         
         Returns:
             Tuple of (camera_id, jpeg_bytes, dope_results_dict or None, ended, raw_frame or None)
@@ -301,8 +364,8 @@ class SyncedVideoManager:
         if not ret:
             return (camera_id, None, None, True, None)  # Signal video end
         
-        # Store raw frame for VGGT if needed
-        if collect_raw_for_vggt and self.vggt_camera_ids and camera_id in self.vggt_camera_ids:
+        # Store raw frame for VGGT or Pose if needed
+        if (collect_raw_for_vggt and self.vggt_camera_ids and camera_id in self.vggt_camera_ids) or collect_raw_for_pose:
             raw_frame = frame.copy()
         
         # Run YOLO on designated camera
@@ -352,6 +415,20 @@ class SyncedVideoManager:
             color = (0, 255, 0) if detected > 0 else (0, 165, 255)
             cv2.putText(frame, f"DOPE: {detected}/{len(objs)}", (5, 15), self.font, 0.4, color, 1)
         
+        # Draw 2D poses if available (poses detected on original resolution, need to scale for display)
+        if self.pose_enabled and camera_id in self.cached_2d_poses and self.pose_estimator is not None:
+            # Get original frame dimensions from cached poses (they store the detection dimensions)
+            # The frame is now resized, so we calculate scale from original to target
+            orig_h, orig_w = cam_data.get('orig_dims', (720, 1280))  # Default to typical camera resolution
+            scale_x = self.target_width / orig_w
+            scale_y = self.target_height / orig_h
+            
+            for pose_2d in self.cached_2d_poses[camera_id]:
+                frame = self.pose_estimator.pose_detector.draw_pose(
+                    frame, pose_2d, min_conf=0.5,
+                    scale_x=scale_x, scale_y=scale_y
+                )
+        
         # Encode as JPEG using pre-allocated params
         _, jpeg = cv2.imencode('.jpg', frame, self.jpeg_params)
         
@@ -378,26 +455,34 @@ class SyncedVideoManager:
         vggt_interval_ok = (self.vggt_inference_counter % self.vggt_inference_interval) == 0
         run_vggt = (self.vggt_enabled and self.vggt_detector is not None and vggt_interval_ok)
         
+        # Pose estimation conditions
+        pose_interval_ok = (self.pose_inference_counter % self.pose_inference_interval) == 0
+        run_pose = (self.pose_enabled and self.pose_estimator is not None and pose_interval_ok)
+        
         # Log VGGT state periodically
         if self.current_frame % 100 == 0:
             print(f"[VGGT Debug] enabled={self.vggt_enabled}, detector={self.vggt_detector is not None}, "
                   f"interval_ok={vggt_interval_ok}, camera_ids={self.vggt_camera_ids}")
+            print(f"[Pose Debug] enabled={self.pose_enabled}, estimator={self.pose_estimator is not None}, "
+                  f"interval_ok={pose_interval_ok}")
         
         self.current_frame += 1
         self.yolo_inference_counter += 1
         self.dope_inference_counter += 1
         self.vggt_inference_counter += 1
+        self.pose_inference_counter += 1
         
         # Process cameras in parallel for heavy inference frames, sequential otherwise
         video_ended = False
         vggt_raw_frames = {}  # camera_id -> raw frame for VGGT
+        pose_raw_frames = {}  # camera_id -> raw frame for Pose estimation
         
         if run_dope and len(self.dope_objects_by_camera) > 1:
             # Parallel processing when running DOPE on multiple cameras
             futures = []
             for camera_id in self.camera_ids_list:
                 future = self.executor.submit(
-                    self._process_camera, camera_id, (run_yolo, run_dope), run_vggt
+                    self._process_camera, camera_id, (run_yolo, run_dope), run_vggt, run_pose
                 )
                 futures.append(future)
             
@@ -423,12 +508,15 @@ class SyncedVideoManager:
                                     current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
                     if raw_frame is not None:
-                        vggt_raw_frames[camera_id] = raw_frame
+                        if run_vggt and camera_id in self.vggt_camera_ids:
+                            vggt_raw_frames[camera_id] = raw_frame
+                        if run_pose:
+                            pose_raw_frames[camera_id] = raw_frame
         else:
             # Sequential processing for lighter frames
             for camera_id in self.camera_ids_list:
                 camera_id, jpeg_data, dope_results, ended, raw_frame = self._process_camera(
-                    camera_id, (run_yolo, run_dope), run_vggt
+                    camera_id, (run_yolo, run_dope), run_vggt, run_pose
                 )
                 if ended:
                     video_ended = True
@@ -448,7 +536,10 @@ class SyncedVideoManager:
                                     current_object_poses[obj_name] = result
                                 self.cached_dope_results[obj_name] = result
                     if raw_frame is not None:
-                        vggt_raw_frames[camera_id] = raw_frame
+                        if run_vggt and camera_id in self.vggt_camera_ids:
+                            vggt_raw_frames[camera_id] = raw_frame
+                        if run_pose:
+                            pose_raw_frames[camera_id] = raw_frame
         
         # Run VGGT inference if enabled and we have all required frames
         if run_vggt:
@@ -471,13 +562,35 @@ class SyncedVideoManager:
             
             self.executor.submit(run_vggt_async)
         
+        # Run Pose estimation if enabled and we have collected frames
+        if run_pose and len(pose_raw_frames) >= 2:
+            def run_pose_async():
+                global current_3d_poses, current_2d_poses
+                try:
+                    poses_2d, poses_3d = self.pose_estimator.process_frames(pose_raw_frames)
+                    
+                    with pose_data_lock:
+                        current_3d_poses = poses_3d
+                        current_2d_poses = poses_2d
+                        # Also update cached poses for drawing
+                        self.cached_2d_poses = poses_2d
+                        self.cached_3d_poses = poses_3d
+                    
+                    if poses_3d:
+                        valid_kpts = sum(1 for i in range(17) if poses_3d[0].num_views[i] >= 2)
+                        print(f"[Pose] Detected {len(poses_3d)} person(s), {valid_kpts}/17 keypoints triangulated")
+                except Exception as e:
+                    print(f"[Pose] Error in async inference: {e}")
+            
+            self.executor.submit(run_pose_async)
+        
         # Handle video loop
         if video_ended:
             self._reset_all_captures()
     
     def _reset_all_captures(self):
         """Reset all video captures to frame 0."""
-        global current_object_poses, current_point_cloud, first_detection_flags
+        global current_object_poses, current_point_cloud, first_detection_flags, current_3d_poses, current_2d_poses
         self.current_frame = 0
         self.yolo_inference_counter = 0
         self.cached_yolo_results = None
@@ -485,6 +598,9 @@ class SyncedVideoManager:
         self.cached_dope_results = {}
         self.vggt_inference_counter = 0
         self.cached_vggt_result = None
+        self.pose_inference_counter = 0
+        self.cached_2d_poses = {}
+        self.cached_3d_poses = []
         self.fps_start_time = time.perf_counter()
         self.fps_frame_count = 0
         
@@ -499,6 +615,10 @@ class SyncedVideoManager:
         
         with point_cloud_lock:
             current_point_cloud = None
+        
+        with pose_data_lock:
+            current_3d_poses = []
+            current_2d_poses = {}
     
     def get_frame(self, camera_id):
         """Get cached frame for a camera."""
@@ -612,6 +732,21 @@ def load_vggt_model():
     return vggt_detector
 
 
+def load_pose_estimator_model():
+    """Load YOLO-Pose model for 3D human pose estimation."""
+    global pose_estimator, calibration_data
+    
+    # Create pose estimator with calibration data
+    pose_estimator = create_pose_estimator(calibration_data)
+    
+    if pose_estimator is not None:
+        print(f"[Pose] Human pose estimator loaded successfully")
+    else:
+        print(f"[Pose] Warning: Could not load pose estimator")
+    
+    return pose_estimator
+
+
 def load_calibration():
     """Load camera calibration data from YAML file and transform to checkerboard origin."""
     global calibration_data
@@ -664,7 +799,7 @@ def load_calibration():
 
 def init_sync_manager():
     """Initialize synchronized video manager."""
-    global sync_manager, yolo_detector, dope_detectors, vggt_detector
+    global sync_manager, yolo_detector, dope_detectors, vggt_detector, pose_estimator
 
     sync_manager = SyncedVideoManager()
 
@@ -700,6 +835,10 @@ def init_sync_manager():
             sync_manager.set_vggt_detector(vggt_detector, valid_vggt_cameras, inference_interval=20)
         else:
             print(f"[VGGT] Warning: Not all VGGT cameras available. Need: {VGGT_CAMERA_IDS}, Have: {list(sync_manager.cameras.keys())}")
+    
+    # Set pose estimator for 3D human pose
+    if pose_estimator is not None:
+        sync_manager.set_pose_estimator(pose_estimator, inference_interval=2)
     
     print(f"[SyncManager] Initialized with {len(sync_manager.cameras)} cameras, synced to {sync_manager.total_frames} frames")
 
@@ -1095,6 +1234,150 @@ async def set_vggt_interval(request):
         )
 
 
+# =============================================================================
+# Human Pose API Routes
+# =============================================================================
+
+async def get_human_poses_3d(request):
+    """Get current 3D human pose data.
+    
+    Returns list of 3D poses with keypoints in world coordinates.
+    """
+    global current_3d_poses
+    
+    with pose_data_lock:
+        if not current_3d_poses:
+            return web.Response(
+                content_type="application/json",
+                text=fast_json_dumps({
+                    'success': False,
+                    'poses': [],
+                    'keypoint_names': KEYPOINT_NAMES,
+                    'skeleton_connections': SKELETON_CONNECTIONS
+                }),
+                headers=NO_CACHE_HEADERS
+            )
+        
+        # Convert poses to serializable format
+        poses_data = []
+        for pose in current_3d_poses:
+            pose_dict = pose_3d_to_dict(pose)
+            poses_data.append(pose_dict)
+        
+        result = {
+            'success': True,
+            'num_persons': len(poses_data),
+            'poses': poses_data,
+            'keypoint_names': KEYPOINT_NAMES,
+            'skeleton_connections': SKELETON_CONNECTIONS
+        }
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps(result),
+        headers=NO_CACHE_HEADERS
+    )
+
+
+async def get_human_poses_2d(request):
+    """Get current 2D pose data from all cameras.
+    
+    Returns dict of camera_id -> list of 2D poses.
+    """
+    global current_2d_poses
+    
+    with pose_data_lock:
+        if not current_2d_poses:
+            return web.Response(
+                content_type="application/json",
+                text=fast_json_dumps({
+                    'success': False,
+                    'poses_by_camera': {},
+                    'keypoint_names': KEYPOINT_NAMES
+                }),
+                headers=NO_CACHE_HEADERS
+            )
+        
+        # Convert poses to serializable format
+        result = {
+            'success': True,
+            'poses_by_camera': poses_2d_to_dict(current_2d_poses),
+            'keypoint_names': KEYPOINT_NAMES,
+            'skeleton_connections': SKELETON_CONNECTIONS
+        }
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps(result),
+        headers=NO_CACHE_HEADERS
+    )
+
+
+async def get_pose_status(request):
+    """Get pose estimation status including enabled state."""
+    global sync_manager, pose_estimator
+    
+    status = {
+        'loaded': pose_estimator is not None,
+        'enabled': sync_manager.pose_enabled if sync_manager else False,
+        'inference_interval': sync_manager.pose_inference_interval if sync_manager else 2,
+        'num_cameras': len(sync_manager.cameras) if sync_manager else 0
+    }
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps(status),
+        headers=NO_CACHE_HEADERS
+    )
+
+
+async def set_pose_enabled(request):
+    """Enable or disable pose estimation."""
+    global sync_manager, pose_enabled
+    
+    try:
+        data = await request.json()
+        enabled = data.get('enabled', False)
+        
+        if sync_manager:
+            sync_manager.set_pose_enabled(enabled)
+            pose_enabled = enabled
+        
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': True, 'enabled': enabled})
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': False, 'error': str(e)}),
+            status=400
+        )
+
+
+async def set_pose_interval(request):
+    """Set pose estimation inference interval."""
+    global sync_manager
+    
+    try:
+        data = await request.json()
+        interval = int(data.get('interval', 2))
+        
+        if sync_manager:
+            sync_manager.set_pose_interval(interval)
+        
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': True, 'interval': interval})
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': False, 'error': str(e)}),
+            status=400
+        )
+
+
 async def on_shutdown(app):
     """Cleanup on shutdown."""
     global streaming_active
@@ -1132,6 +1415,13 @@ async def run_server(host="0.0.0.0", port=8085):
     app.router.add_post("/api/vggt/enable", set_vggt_enabled)
     app.router.add_post("/api/vggt/interval", set_vggt_interval)
     
+    # Human Pose routes
+    app.router.add_get("/api/pose/3d", get_human_poses_3d)
+    app.router.add_get("/api/pose/2d", get_human_poses_2d)
+    app.router.add_get("/api/pose/status", get_pose_status)
+    app.router.add_post("/api/pose/enable", set_pose_enabled)
+    app.router.add_post("/api/pose/interval", set_pose_interval)
+    
     # Static files
     app.router.add_static('/videos/', 'data', show_index=False)
     
@@ -1144,6 +1434,7 @@ async def run_server(host="0.0.0.0", port=8085):
     
     yolo_status = f"enabled on {yolo_device}" if yolo_detector else "disabled"
     vggt_status = "loaded (disabled by default)" if vggt_detector else "not loaded"
+    pose_status = "loaded (enabled)" if pose_estimator else "not loaded"
     print(f"\n{'='*60}")
     print(f"  3D Scene Multi-Camera Server (Synchronized)")
     print(f"{'='*60}")
@@ -1158,6 +1449,9 @@ async def run_server(host="0.0.0.0", port=8085):
     print(f"  VGGT Status:    {vggt_status}")
     print(f"  VGGT Cameras:   {VGGT_CAMERA_IDS}")
     print(f"  VGGT Interval:  Every {sync_manager.vggt_inference_interval} frames (configurable)")
+    print(f"  Human Pose:     {pose_status}")
+    print(f"  Pose Cameras:   All {len(sync_manager.cameras)} cameras")
+    print(f"  Pose Interval:  Every {sync_manager.pose_inference_interval} frames")
     print(f"  Total Frames:   {sync_manager.total_frames}")
     print(f"  Cameras:        {len(sync_manager.cameras)}")
     print(f"  Streaming:      Waiting for Start command")
@@ -1193,8 +1487,11 @@ def main():
     # Load VGGT model for 3D point cloud reconstruction
     load_vggt_model()
 
-    # Load calibration data
+    # Load calibration data (required before pose estimator)
     load_calibration()
+
+    # Load human pose estimator for 3D pose reconstruction
+    load_pose_estimator_model()
 
     # Initialize synchronized video manager
     init_sync_manager()
