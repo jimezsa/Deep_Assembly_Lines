@@ -96,6 +96,10 @@ vggt_enabled = False  # Whether VGGT inference is enabled (can be toggled from U
 current_point_cloud = None  # Current point cloud data
 point_cloud_lock = threading.Lock()
 
+# Distance from tool tip to case (in cm, sent from frontend)
+current_tool_case_distance = 0.0  # Distance in centimeters
+distance_lock = threading.Lock()
+
 
 # =============================================================================
 # Video Manager
@@ -1095,6 +1099,55 @@ async def set_vggt_interval(request):
         )
 
 
+# =============================================================================
+# Tool-Case Distance API Routes
+# =============================================================================
+
+async def set_tool_case_distance(request):
+    """Set the current distance from tool tip to case (sent from frontend).
+    
+    Expects JSON: {"distance_cm": float}
+    """
+    global current_tool_case_distance
+    
+    try:
+        data = await request.json()
+        distance_cm = float(data.get('distance_cm', 0.0))
+        
+        with distance_lock:
+            current_tool_case_distance = distance_cm
+        
+        print(f"[Distance] Tool to nearest case top vertex: {distance_cm:.2f} cm")
+        
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': True, 'distance_cm': distance_cm})
+        )
+    except Exception as e:
+        return web.Response(
+            content_type="application/json",
+            text=fast_json_dumps({'success': False, 'error': str(e)}),
+            status=400
+        )
+
+
+async def get_tool_case_distance(request):
+    """Get the current distance from tool tip to case in centimeters.
+    
+    Returns JSON: {"distance_cm": float}
+    """
+    global current_tool_case_distance
+    
+    with distance_lock:
+        distance_cm = current_tool_case_distance
+    
+    return web.Response(
+        content_type="application/json",
+        text=fast_json_dumps({'distance_cm': distance_cm}),
+        headers=NO_CACHE_HEADERS
+    )
+
+
 async def on_shutdown(app):
     """Cleanup on shutdown."""
     global streaming_active
@@ -1131,6 +1184,10 @@ async def run_server(host="0.0.0.0", port=8085):
     app.router.add_get("/api/vggt/status", get_vggt_status)
     app.router.add_post("/api/vggt/enable", set_vggt_enabled)
     app.router.add_post("/api/vggt/interval", set_vggt_interval)
+    
+    # Tool-Case distance routes
+    app.router.add_post("/api/distance/tool-case", set_tool_case_distance)
+    app.router.add_get("/api/distance/tool-case", get_tool_case_distance)
     
     # Static files
     app.router.add_static('/videos/', 'data', show_index=False)

@@ -1186,6 +1186,33 @@
         const distanceMM = Math.round(minDistance * 1000);
         updateTextSprite(distanceLabel, `${distanceMM} mm`, "#ffaa00");
         distanceLabel.visible = true;
+        
+        // Send distance to backend (in cm)
+        const distanceCM = minDistance * 100;
+        sendDistanceToBackend(distanceCM);
+      }
+      
+      // Throttle for sending distance to backend
+      let lastDistanceSendTime = 0;
+      const DISTANCE_SEND_INTERVAL = 100; // Send every 100ms max
+      
+      // Send distance to backend
+      async function sendDistanceToBackend(distanceCM) {
+        const now = Date.now();
+        if (now - lastDistanceSendTime < DISTANCE_SEND_INTERVAL) {
+          return; // Throttle requests
+        }
+        lastDistanceSendTime = now;
+        
+        try {
+          await fetch('/api/distance/tool-case', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ distance_cm: distanceCM })
+          });
+        } catch (error) {
+          // Silently handle errors to avoid console spam
+        }
       }
 
       // Load all configured DOPE objects
