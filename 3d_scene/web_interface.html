@@ -509,6 +509,10 @@
       // First detection tracking - store first detected position for "case" object
       let firstDetectedPose = {}; // object_name -> {position: THREE.Vector3, quaternion: THREE.Quaternion}
 
+      // Bounding box for case object
+      let caseBoundingBox = null; // THREE.Mesh for transparent bounding box
+      let caseBoundingBoxEdges = null; // THREE.LineSegments for box edges
+
       // GLB scene model state
       let glbSceneModel = null; // THREE.Object3D for the loaded GLB scene
       let glbVisible = true;
@@ -833,6 +837,62 @@
         });
       }
 
+      // Create transparent bounding box for the case object
+      function createCaseBoundingBox(caseModel) {
+        // Calculate bounding box dimensions from the model
+        const boundingBox = new THREE.Box3().setFromObject(caseModel);
+        const size = new THREE.Vector3();
+        boundingBox.getSize(size);
+        
+        console.log(`[case] Bounding box size:`, size.toArray().map((v) => v.toFixed(4)));
+        
+        // Create transparent box mesh
+        const boxGeometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+        const boxMaterial = new THREE.MeshBasicMaterial({
+          color: 0x00ff88, // Green color
+          transparent: true,
+          opacity: 0.15,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        });
+        
+        caseBoundingBox = new THREE.Mesh(boxGeometry, boxMaterial);
+        caseBoundingBox.visible = false; // Hidden until case is detected
+        
+        // Create edges for the bounding box
+        const edgesGeometry = new THREE.EdgesGeometry(boxGeometry);
+        const edgesMaterial = new THREE.LineBasicMaterial({
+          color: 0x00ff88,
+          linewidth: 2,
+          transparent: true,
+          opacity: 0.8,
+        });
+        
+        caseBoundingBoxEdges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+        caseBoundingBox.add(caseBoundingBoxEdges);
+        
+        scene.add(caseBoundingBox);
+        console.log("[case] Transparent bounding box created");
+      }
+      
+      // Update case bounding box position to match the case model
+      function updateCaseBoundingBox() {
+        if (!caseBoundingBox || !objectModels["case"]) return;
+        
+        const caseModel = objectModels["case"];
+        const centroid = objectCentroids["case"];
+        
+        if (caseModel.visible && centroid) {
+          // Position bounding box at the case model's centroid position
+          // The case model is offset so its centroid is at the detected pose
+          // So the bounding box center should be at: model.position + rotated centroid
+          const rotatedCentroid = centroid.clone().applyQuaternion(caseModel.quaternion);
+          caseBoundingBox.position.copy(caseModel.position).add(rotatedCentroid);
+          caseBoundingBox.quaternion.copy(caseModel.quaternion);
+          caseBoundingBox.visible = true;
+        }
+      }
+
       // Load all configured DOPE objects
       async function loadAllDopeObjects() {
         await loadDopeObjectsConfig();
@@ -854,6 +914,11 @@
 
         await Promise.all(loadPromises);
         console.log(`Loaded ${Object.keys(objectModels).length} object models`);
+        
+        // Create bounding box for case object if loaded
+        if (objectModels["case"]) {
+          createCaseBoundingBox(objectModels["case"]);
+        }
       }
 
       // Fetch and update poses for all detected objects
@@ -881,6 +946,7 @@
               model.position.copy(firstDetectedPose[objectName].position);
               model.quaternion.copy(firstDetectedPose[objectName].quaternion);
               model.visible = true;
+              updateCaseBoundingBox();
               detectedCount++;
               continue;
             }
@@ -1006,6 +1072,11 @@
               model.position.copy(modelPos);
               model.quaternion.copy(finalQuat);
               model.visible = true;
+              
+              // Update bounding box for case object
+              if (objectName === "case") {
+                updateCaseBoundingBox();
+              }
             }
           }
 
