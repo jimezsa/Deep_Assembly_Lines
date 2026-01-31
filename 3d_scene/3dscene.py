@@ -33,6 +33,7 @@ CALIBRATION_FILE = "data/cams_calibrations.yml"
 YOLO_CAMERA_ID = "137322071489"
 
 # DOPE configuration
+DOPE_ENABLED = False  # Set to False to completely disable DOPE inference
 DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
 #DOPE_CAMERA_INFO_PATH = "3d_scene/config/camera_info.yaml"
 
@@ -570,6 +571,11 @@ def load_dope_models():
     dope_detectors = {}
     current_object_poses = {}
     first_detection_flags = {}
+    
+    # Check if DOPE is enabled
+    if not DOPE_ENABLED:
+        print("[DOPE] Disabled via DOPE_ENABLED=False, skipping model loading")
+        return dope_detectors
     
     print(f"[DOPE] Optimization settings: FP16={DOPE_USE_FP16}, stop_at_stage={DOPE_STOP_AT_STAGE}")
     
@@ -1206,12 +1212,15 @@ async def run_server(host="0.0.0.0", port=8085):
     print(f"{'='*60}")
     print(f"  Web Interface:  http://{host}:{port}")
     print(f"  YOLO Camera:    {YOLO_CAMERA_ID} ({yolo_status})")
-    print(f"  DOPE Objects:")
-    for obj_name, obj_config in DOPE_OBJECTS.items():
-        loaded = "loaded" if obj_name in dope_detectors else "not loaded"
-        print(f"    - {obj_name}: camera {obj_config['camera_id']} ({loaded})")
-    print(f"  DOPE Settings:  FP16={DOPE_USE_FP16}, stages={DOPE_STOP_AT_STAGE}")
-    print(f"  DOPE Interval:  Every {sync_manager.dope_inference_interval} frames")
+    dope_status = "enabled" if DOPE_ENABLED else "DISABLED"
+    print(f"  DOPE Status:    {dope_status}")
+    if DOPE_ENABLED:
+        print(f"  DOPE Objects:")
+        for obj_name, obj_config in DOPE_OBJECTS.items():
+            loaded = "loaded" if obj_name in dope_detectors else "not loaded"
+            print(f"    - {obj_name}: camera {obj_config['camera_id']} ({loaded})")
+        print(f"  DOPE Settings:  FP16={DOPE_USE_FP16}, stages={DOPE_STOP_AT_STAGE}")
+        print(f"  DOPE Interval:  Every {sync_manager.dope_inference_interval} frames")
     print(f"  VGGT Status:    {vggt_status}")
     print(f"  VGGT Cameras:   {VGGT_CAMERA_IDS}")
     print(f"  VGGT Interval:  Every {sync_manager.vggt_inference_interval} frames (configurable)")
