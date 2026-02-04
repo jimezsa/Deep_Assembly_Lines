@@ -140,7 +140,9 @@ class SyncedVideoManager:
         self.dope_objects_by_camera = (
             {}
         )  # camera_id -> [(obj_name, detector), ...] - pre-computed
-        self.dope_inference_interval = 15  # Run DOPE every 15 frames (~5x faster playback)
+        self.dope_inference_interval = (
+            15  # Run DOPE every 15 frames (~5x faster playback)
+        )
         self.dope_inference_counter = 0
         self.cached_dope_results = {}  # object_name -> detection result
 
