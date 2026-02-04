@@ -65,6 +65,217 @@ def get_best_device():
         return "cpu"
 
 
+def draw_battery_status_overlay(frame, slot_states, error_msg=None, success=False):
+    """Draw battery insertion status overlay on frame.
+    
+    Draws a 2x3 grid showing slot status:
+    - Green square: correctly inserted
+    - Red square: wrongly inserted
+    - Gray square: empty
+    
+    Layout:
+    2 4 6  (top row)
+    1 3 5  (bottom row)
+    
+    Args:
+        frame: BGR image to draw on
+        slot_states: Dict mapping slot_id -> state ('correct', 'wrong', 'empty')
+        error_msg: Optional error message to display at bottom
+        success: Whether sequence is complete and successful
+        
+    Returns:
+        Frame with overlay drawn
+    """
+    h, w = frame.shape[:2]
+    
+    # Grid parameters (upper right corner)
+    grid_size = 20  # Size of each square
+    grid_margin = 10  # Margin from edge
+    grid_spacing = 2  # Spacing between squares
+    
+    # Calculate grid position (upper right)
+    grid_start_x = w - (3 * grid_size + 2 * grid_spacing + grid_margin)
+    grid_start_y = grid_margin
+    
+    # Slot layout mapping: (row, col) -> slot_id
+    # Row 0 (top): 2, 4, 6
+    # Row 1 (bottom): 1, 3, 5
+    layout = [
+        (1, 0, 1),  # row 1, col 0 -> slot 1
+        (0, 0, 2),  # row 0, col 0 -> slot 2
+        (1, 1, 3),  # row 1, col 1 -> slot 3
+        (0, 1, 4),  # row 0, col 1 -> slot 4
+        (1, 2, 5),  # row 1, col 2 -> slot 5
+        (0, 2, 6),  # row 0, col 2 -> slot 6
+    ]
+    
+    # Color mapping
+    color_map = {
+        'correct': (0, 255, 0),    # Green
+        'wrong': (0, 0, 255),      # Red
+        'empty': (100, 100, 100)   # Gray
+    }
+    
+    # Draw semi-transparent background for grid
+    overlay = frame.copy()
+    bg_x1 = grid_start_x - 5
+    bg_y1 = grid_start_y - 5
+    bg_x2 = grid_start_x + 3 * grid_size + 2 * grid_spacing + 5
+    bg_y2 = grid_start_y + 2 * grid_size + grid_spacing + 5
+    cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.4, frame, 0.6, 0, frame)
+    
+    # Draw grid squares
+    for row, col, slot_id in layout:
+        x = grid_start_x + col * (grid_size + grid_spacing)
+        y = grid_start_y + row * (grid_size + grid_spacing)
+        
+        state = slot_states.get(slot_id, 'empty')
+        color = color_map[state]
+        
+        cv2.rectangle(frame, (x, y), (x + grid_size, y + grid_size), color, -1)
+        cv2.rectangle(frame, (x, y), (x + grid_size, y + grid_size), (255, 255, 255), 1)
+        
+        # Draw slot number
+        text = str(slot_id)
+        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0]
+        text_x = x + (grid_size - text_size[0]) // 2
+        text_y = y + (grid_size + text_size[1]) // 2
+        cv2.putText(frame, text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 
+                   0.4, (255, 255, 255), 1, cv2.LINE_AA)
+    
+    # Draw error message at bottom if present
+    if error_msg:
+        # Extract expected slot number from message
+        # error_msg format: "WRONG SLOT: X inserted (expected Y)"
+        if "expected" in error_msg:
+            expected = error_msg.split("expected ")[-1].rstrip(")")
+            text = f"WRONG SLOT: expected {expected}"
+        else:
+            text = error_msg
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.6
+        thickness = 2
+        
+        # Get text size for background
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        # Position at bottom center
+        text_x = (w - text_w) // 2
+        text_y = h - 30
+        
+        # Draw semi-transparent background
+        overlay = frame.copy()
+        bg_padding = 10
+        cv2.rectangle(overlay, 
+                     (text_x - bg_padding, text_y - text_h - bg_padding),
+                     (text_x + text_w + bg_padding, text_y + baseline + bg_padding),
+                     (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        
+        # Draw text
+        cv2.putText(frame, text, (text_x, text_y), font, font_scale, 
+                   (0, 0, 255), thickness, cv2.LINE_AA)
+    
+    # Draw success message at bottom if complete
+    if success:
+        text = "Correct sequence completed"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.7
+        thickness = 2
+        
+        # Get text size for background
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        
+        # Position at bottom center
+        text_x = (w - text_w) // 2
+        text_y = h - 30
+        
+        # Draw semi-transparent background
+        overlay = frame.copy()
+        bg_padding = 10
+        cv2.rectangle(overlay, 
+                     (text_x - bg_padding, text_y - text_h - bg_padding),
+                     (text_x + text_w + bg_padding, text_y + baseline + bg_padding),
+                     (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        
+        # Draw text
+        cv2.putText(frame, text, (text_x, text_y), font, font_scale, 
+                   (0, 255, 0), thickness, cv2.LINE_AA)
+    
+    return frame
+
+
+def draw_lstm_status_overlay(frame, lstm_status):
+    """Draw LSTM error detection status in upper left corner.
+    
+    Args:
+        frame: BGR image to draw on
+        lstm_status: Dict with 'error_detected', 'confidence', 'ready'
+        
+    Returns:
+        Frame with LSTM overlay drawn
+    """
+    if lstm_status is None or not lstm_status.get('ready', False):
+        return frame
+    
+    h, w = frame.shape[:2]
+    
+    # Position in upper left corner
+    margin = 10
+    box_width = 80
+    box_height = 25
+    
+    x1 = margin
+    y1 = margin
+    x2 = x1 + box_width
+    y2 = y1 + box_height
+    
+    # Determine status
+    error_detected = lstm_status.get('error_detected', False)
+    confidence = lstm_status.get('confidence', 0.0)
+    
+    # Colors: Green for OK, Red for ERROR
+    if error_detected:
+        bg_color = (0, 0, 200)  # Red background
+        text = "WRONG"
+        text_color = (255, 255, 255)
+    else:
+        bg_color = (0, 200, 0)  # Green background
+        text = "OK"
+        text_color = (255, 255, 255)
+    
+    # Draw semi-transparent background
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), bg_color, -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+    
+    # Draw border
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
+    
+    # Draw text
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+    
+    text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+    text_x = x1 + (box_width - text_size[0]) // 2
+    text_y = y1 + (box_height + text_size[1]) // 2
+    
+    cv2.putText(frame, text, (text_x, text_y), font, font_scale, 
+               text_color, thickness, cv2.LINE_AA)
+    
+    # Optional: Show confidence as small text below
+    conf_text = f"{confidence:.0%}"
+    conf_font_scale = 0.3
+    conf_thickness = 1
+    conf_y = y2 + 12
+    cv2.putText(frame, conf_text, (x1 + 5, conf_y), font, conf_font_scale,
+               (255, 255, 255), conf_thickness, cv2.LINE_AA)
+    
+    return frame
+
 # =============================================================================
 # YOLO Wrapper
 # =============================================================================
@@ -156,7 +367,7 @@ class YOLODetector:
             return None
     
     def draw_predictions(self, frame, results, target_width=None, target_height=None, 
-                         alpha=0.4):
+                     alpha=0.4, battery_status=None, lstm_status=None):
         """Draw YOLO segmentation masks and labels on frame (optimized).
         
         Uses pre-allocated overlay buffer to avoid memory allocation each frame.
@@ -167,16 +378,38 @@ class YOLODetector:
             target_width: Target width for scaling (optional)
             target_height: Target height for scaling (optional)
             alpha: Opacity for mask overlay (0-1)
+            battery_status: Optional dict with battery sequence status:
+                           {'slot_states': dict, 'error_msg': str, 'success': bool}
             
         Returns:
             Frame with drawn predictions
         """
         if results is None:
+            # Still draw battery status overlay if available
+            if battery_status:
+                frame = draw_battery_status_overlay(
+                    frame, 
+                    battery_status.get('slot_states', {}),
+                    battery_status.get('error_msg'),
+                    battery_status.get('success', False)
+                )
+            if lstm_status:
+                frame = draw_lstm_status_overlay(frame, lstm_status)
             return frame
         
         # Quick check for masks (avoid iterator for speed)
         result = results[0] if results else None
         if result is None or result.masks is None or len(result.masks.xy) == 0:
+            # Still draw battery status overlay if available
+            if battery_status:
+                frame = draw_battery_status_overlay(
+                    frame, 
+                    battery_status.get('slot_states', {}),
+                    battery_status.get('error_msg'),
+                    battery_status.get('success', False)
+                )
+            if lstm_status:
+                frame = draw_lstm_status_overlay(frame, lstm_status)
             return frame
         
         # Use frame dimensions if target not specified
@@ -230,6 +463,20 @@ class YOLODetector:
         
         # Blend overlay with frame (in-place)
         cv2.addWeighted(self.overlay, alpha, frame, 1 - alpha, 0, frame)
+        
+        # Draw battery status overlay if available
+        if battery_status:
+            frame = draw_battery_status_overlay(
+                frame, 
+                battery_status.get('slot_states', {}),
+                battery_status.get('error_msg'),
+                battery_status.get('success', False)
+            )
+        
+        # Draw LSTM status overlay if available
+        if lstm_status:
+            frame = draw_lstm_status_overlay(frame, lstm_status)
+        
         return frame
 
 
