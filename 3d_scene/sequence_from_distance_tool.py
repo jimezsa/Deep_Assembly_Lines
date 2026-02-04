@@ -11,7 +11,7 @@ Expected order: BL (bottom-left) → TR (top-right) → BR (bottom-right) → TL
 Usage:
     # Start the 3D scene backend first:
     cd 3d_scene && python 3dscene.py
-    
+
     # Then in another terminal, run this monitor:
     python 3d_scene/sequence_from_distance_tool.py
 
@@ -34,7 +34,7 @@ SHORT_NAMES = {
     "top_left": "TL",
     "top_right": "TR",
     "bottom_left": "BL",
-    "bottom_right": "BR"
+    "bottom_right": "BR",
 }
 
 # Expected sequence
@@ -83,7 +83,7 @@ def print_screw_diagram(status):
     screws = status.get("screws", {})
     active = status.get("active_screw", None)
     next_expected = status.get("next_expected", None)
-    
+
     def get_screw_char(pos):
         screw = screws.get(pos, {})
         if screw.get("is_tightened", False):
@@ -94,7 +94,7 @@ def print_screw_diagram(status):
             return "◎"  # Next expected
         else:
             return "○"  # Pending
-    
+
     def get_screw_color(pos):
         screw = screws.get(pos, {})
         if screw.get("is_tightened", False):
@@ -105,14 +105,14 @@ def print_screw_diagram(status):
             return "\033[94m"  # Blue
         else:
             return "\033[90m"  # Gray
-    
+
     reset = "\033[0m"
-    
+
     tl = f"{get_screw_color('top_left')}{get_screw_char('top_left')}{reset}"
     tr = f"{get_screw_color('top_right')}{get_screw_char('top_right')}{reset}"
     bl = f"{get_screw_color('bottom_left')}{get_screw_char('bottom_left')}{reset}"
     br = f"{get_screw_color('bottom_right')}{get_screw_char('bottom_right')}{reset}"
-    
+
     print(f"  ┌─────────────────┐")
     print(f"  │  {tl} TL     TR {tr}  │")
     print(f"  │                 │")
@@ -126,9 +126,9 @@ def print_status(status, distance):
     """Print current status in a formatted way."""
     # Clear screen (optional - comment out if you prefer scrolling output)
     # print("\033[H\033[J", end="")
-    
+
     print("\r" + " " * 80, end="\r")  # Clear line
-    
+
     state = status.get("current_state", "unknown")
     step = status.get("current_step", 0)
     active = status.get("active_screw", None)
@@ -139,28 +139,28 @@ def print_status(status, distance):
     errors = status.get("errors", [])
     frames_near = status.get("frames_near_3d", 0)
     frames_to_complete = status.get("frames_to_complete_3d", 40)
-    
+
     # Color codes
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
     RED = "\033[91m"
     CYAN = "\033[96m"
     RESET = "\033[0m"
-    
+
     # State indicator
     state_color = {
         "idle": "\033[90m",
         "approaching": CYAN,
         "screwing": YELLOW,
-        "completed": GREEN
+        "completed": GREEN,
     }.get(state, RESET)
-    
+
     # Print compact status line
     active_str = SHORT_NAMES.get(active, "-") if active else "-"
     next_str = SHORT_NAMES.get(next_expected, "-") if next_expected else "Done"
     seq_str = format_sequence(actual_seq) if actual_seq else "None"
     dist_str = f"{distance:.1f}cm" if distance else "N/A"
-    
+
     # Progress bar for screwing
     progress = ""
     if state == "screwing" and frames_to_complete > 0:
@@ -168,7 +168,7 @@ def print_status(status, distance):
         bar_len = 10
         filled = int(pct * bar_len)
         progress = f" [{('█' * filled) + ('░' * (bar_len - filled))}]"
-    
+
     # Status line
     if completed:
         if is_correct:
@@ -179,16 +179,18 @@ def print_status(status, distance):
         if errors:
             print(f"  Errors: {', '.join(errors)}")
     else:
-        print(f"  State: {state_color}{state.upper():10}{RESET} | "
-              f"Step: {step+1}/4 | "
-              f"Active: {YELLOW}{active_str:3}{RESET} | "
-              f"Next: {CYAN}{next_str:3}{RESET} | "
-              f"Dist: {dist_str}{progress}")
-        
+        print(
+            f"  State: {state_color}{state.upper():10}{RESET} | "
+            f"Step: {step+1}/4 | "
+            f"Active: {YELLOW}{active_str:3}{RESET} | "
+            f"Next: {CYAN}{next_str:3}{RESET} | "
+            f"Dist: {dist_str}{progress}"
+        )
+
         if actual_seq:
             correctness = f"{GREEN}✓{RESET}" if is_correct else f"{RED}✗{RESET}"
             print(f"  Progress: {seq_str} {correctness}")
-        
+
         if errors and not is_correct:
             print(f"  {RED}Errors: {', '.join(errors[-3:])}{RESET}")
 
@@ -197,7 +199,7 @@ def main():
     """Main monitoring loop."""
     print_status_header()
     print("\nConnecting to backend at", BACKEND_URL, "...")
-    
+
     # Check connection
     status = get_screw_status()
     if status is None:
@@ -205,37 +207,37 @@ def main():
         print("Make sure the 3D scene server is running:")
         print("  cd 3d_scene && python 3dscene.py")
         return
-    
+
     print("Connected! Monitoring screw sequence...\n")
     print("Legend: ○ pending  ◎ next expected  ● active  ✓ done")
     print("-" * 70)
-    
+
     last_status = None
     last_diagram_time = 0
-    
+
     try:
         while True:
             status = get_screw_status()
             distance = get_distance_sync()
-            
+
             if status:
                 # Print diagram when state changes significantly
                 current_time = time.time()
                 state_changed = (
-                    last_status is None or
-                    status.get("current_step") != last_status.get("current_step") or
-                    status.get("current_state") != last_status.get("current_state") or
-                    status.get("completed") != last_status.get("completed")
+                    last_status is None
+                    or status.get("current_step") != last_status.get("current_step")
+                    or status.get("current_state") != last_status.get("current_state")
+                    or status.get("completed") != last_status.get("completed")
                 )
-                
+
                 if state_changed or current_time - last_diagram_time > 5:
                     print()
                     print_screw_diagram(status)
                     last_diagram_time = current_time
-                
+
                 print_status(status, distance)
                 last_status = status
-                
+
                 # Stop polling as frequently if completed
                 if status.get("completed"):
                     time.sleep(2.0)
@@ -244,17 +246,19 @@ def main():
             else:
                 print("\r  Waiting for backend...", end="")
                 time.sleep(1.0)
-                
+
     except KeyboardInterrupt:
         print("\n\nMonitoring stopped.")
-        
+
         # Print final summary
         if last_status and last_status.get("actual_sequence"):
             print("\n" + "=" * 70)
             print("FINAL SUMMARY")
             print("=" * 70)
             print(f"  Expected: {format_sequence(EXPECTED_ORDER)}")
-            print(f"  Actual:   {format_sequence(last_status.get('actual_sequence', []))}")
+            print(
+                f"  Actual:   {format_sequence(last_status.get('actual_sequence', []))}"
+            )
             print(f"  Correct:  {'Yes ✓' if last_status.get('is_correct') else 'No ✗'}")
             if last_status.get("errors"):
                 print(f"  Errors:   {', '.join(last_status['errors'])}")
