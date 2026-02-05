@@ -2,7 +2,7 @@
 
 ![GitHub Repo Banner](project_image.png)
 
-3D scene visualization system that tracks a Batteries Screw assembly task using multi-camera recordings, DOPE pose estimation, YOLOv11 segmentation and VGGT for 3D Scene reconstruction
+A multi-camera 3D scene visualization platform for monitoring battery and screw assembly processes. Integrates YOLOv11 for segmentation, DOPE for 6D object pose estimation, and VGGT for real-time 3D scene reconstruction using synchronized video recordings.
 
 ## Demo
 
