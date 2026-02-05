@@ -1,4 +1,4 @@
-# Human Activity Understanding - Screw Assembly Tracking
+# Human Activity Understanding - Deep Assembly Lines
 
 ![GitHub Repo Banner](project_image.png)
 
