@@ -57,7 +57,6 @@ Navigate to the yolov11_finetuned directory and install requirements:
 ```bash
 cd yolov11_finetuned
 python -m pip install -r requirements.txt
-python -m pip install -r requirements_webrtc.txt
 ```
 
 ### Step 4: Verify Installation
@@ -131,8 +130,7 @@ jupyter notebook finetuning_yolov11m-seg.ipynb
 ```
 yolov11_finetuned/
 ├── README.md                           # This file
-├── requirements.txt                    # Python dependencies
-├── requirements_webrtc.txt            # WebRTC-specific dependencies
+├── requirements.txt                    # Python dependencies (includes WebRTC)
 ├── test_yolov11n-seg.py               # Main inference script
 ├── test_yolov11n-seg_webrtc.py        # WebRTC streaming version
 ├── export_to_engine.py                # TensorRT export utility

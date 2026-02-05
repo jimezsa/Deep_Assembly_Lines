@@ -25,8 +25,8 @@ The system consists of:
 ```bash
 cd /workspaces/Documents/Human-Activity-Understanding-Final-Project/yolov11_finetuned
 
-# Install WebRTC dependencies
-pip3 install -r requirements_webrtc.txt
+# Install dependencies (includes WebRTC)
+pip3 install -r requirements.txt
 ```
 
 **Note for Jetson**: If you encounter issues with `av` or `aiortc`, you may need to install system dependencies:
@@ -140,7 +140,7 @@ On your local laptop:
 
 ```bash
 # Reinstall dependencies
-pip3 install --upgrade -r requirements_webrtc.txt
+pip3 install --upgrade -r requirements.txt
 
 # For aiortc build issues on Jetson:
 sudo apt-get install python3-dev

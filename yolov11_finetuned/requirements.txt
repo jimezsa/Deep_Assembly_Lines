@@ -24,8 +24,12 @@ plotly>=5.0.0
 ipykernel>=6.25.0
 jupyter>=1.0.0
 
-# Optional: WebRTC streaming dependencies (see requirements_webrtc.txt)
-# aiohttp>=3.9.0
-# aiortc>=1.6.0
-# av>=10.0.0
+# WebRTC streaming dependencies
+aiohttp>=3.9.0
+aiortc>=1.6.0
+av>=10.0.0
 
+# Additional notes for Jetson Orin Nano
+# Note: Make sure you have PyTorch installed for your specific Jetson platform
+# For Jetson, use: pip3 install torch torchvision torchaudio --index-url https://developer.download.nvidia.com/compute/redist/jp/v512
+# If you encounter NumPy issues, run: pip3 install numpy==1.26.4 --force-reinstall --index-url https://pypi.org/simple/
