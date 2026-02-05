@@ -1,5 +1,7 @@
 # Human Activity Understanding - Screw Assembly Tracking
 
+![GitHub Repo Banner](project_image.png)
+
 3D scene visualization system that tracks a Batteries Screw assembly task using multi-camera recordings, DOPE pose estimation, YOLOv11 segmentation and VGGT for 3D Scene reconstruction
 
 ## Installation
@@ -84,6 +86,9 @@ This project uses the following research works:
 
 - **VGGT (Visual Geometry Grounded Transformer)** - 3D scene reconstruction
   https://vgg-t.github.io/
+
+- **YOLO (You Only Look Once, by Ultralytics)** - state-of-the-art real-time object detection
+  https://github.com/ultralytics/ultralytics
 
 ---
 
