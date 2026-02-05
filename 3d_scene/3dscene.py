@@ -51,9 +51,9 @@ DOPE_CONFIG_PATH = "3d_scene/config/config_pose.yaml"
 
 # DOPE optimization settings
 DOPE_USE_FP16 = (
-    True  # Use half-precision for faster GPU inference (can cause detection issues)
+    False  # Use half-precision for faster GPU inference (can cause detection issues)
 )
-DOPE_STOP_AT_STAGE = 2  # Stop at stage (1-6). Lower = faster but less accurate.
+DOPE_STOP_AT_STAGE = 6  # Stop at stage (1-6). Lower = faster but less accurate.
 # Recommended: 6 for accuracy, 4-5 for speed
 
 # Multiple object configurations for DOPE detection (each with its own camera)

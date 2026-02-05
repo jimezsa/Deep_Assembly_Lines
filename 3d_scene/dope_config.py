@@ -17,8 +17,8 @@ def update_config(mode):
 
     configs = {
         "speed": {
-            "DOPE_USE_FP16": "True",
-            "DOPE_STOP_AT_STAGE": "1",
+            "DOPE_USE_FP16": "False",
+            "DOPE_STOP_AT_STAGE": "6",
             "dope_inference_interval": "4",
             "yolo_inference_interval": "10",
             "name": "Speed Mode (1 fps target, FP16, stage 1, less accurate)",
